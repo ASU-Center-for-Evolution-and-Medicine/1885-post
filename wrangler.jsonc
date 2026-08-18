@@ -1,0 +1,25 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "newsletter-archive",
+	"account_id": "3ed0332b4053248f9a25eedf3c741b54",
+	"main": "src/worker_entry.py",
+	"compatibility_date": "2025-11-02",
+	"compatibility_flags": ["python_workers"],
+	"vars": {
+		// Comma-separated emails with unrestricted delete + grant-management rights.
+		// saghafoo@asu.edu is the confirmed Cloudflare Access identity. gmail removed on
+		// request (to see the non-admin view); the other two guessed candidates remain.
+		"SUPER_ADMIN_EMAILS": "saghafoo@asu.edu,suhail.ghafoor@asu.edu,suhail.ghafoor@mailbox.org"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "newsletter-archive",
+			"database_id": "e4564f83-1082-42d3-ab04-804c49da7088",
+			"remote": true
+		}
+	],
+	"observability": {
+		"enabled": true
+	}
+}

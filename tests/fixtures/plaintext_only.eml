@@ -1,0 +1,17 @@
+Message-ID: <plaintext-2026-08-10@example.org>
+Date: Mon, 10 Aug 2026 07:15:00 +0000
+From: "Small Ops Digest" <ops@small-digest.example.org>
+To: newsletter-archive@example.com
+Subject: This week in small ops
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+This week in small ops
+
+1. We shipped the new deploy pipeline.
+2. Incident retro from Tuesday's outage is linked below.
+3. Hiring update: one new engineer starts next Monday.
+
+Retro doc: https://notes.small-digest.example.org/retro-aug-2026
+
+To stop receiving this digest, reply with STOP.

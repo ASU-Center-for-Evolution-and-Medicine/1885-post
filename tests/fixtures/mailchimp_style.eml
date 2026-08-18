@@ -1,0 +1,40 @@
+Message-ID: <mc-issue-42@list-manage.com>
+Date: Sat, 01 Aug 2026 09:00:00 +0000
+From: "Acme Weekly" <news@acme-newsletter.com>
+To: newsletter-archive@example.com
+Subject: Acme Weekly - Issue 42
+List-Unsubscribe: <https://acme.us1.list-manage.com/unsubscribe?u=abc123&id=def456>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="BOUNDARY1"
+
+--BOUNDARY1
+Content-Type: text/plain; charset="utf-8"
+
+Acme Weekly - Issue 42
+
+This week: our new product launch, a customer story, and upcoming events.
+
+Read more: https://acme-newsletter.com/issue-42
+
+Unsubscribe: https://acme.us1.list-manage.com/unsubscribe?u=abc123&id=def456
+
+--BOUNDARY1
+Content-Type: text/html; charset="utf-8"
+
+<html>
+<head><style>body { font-family: sans-serif; }</style></head>
+<body>
+<h1>Acme Weekly - Issue 42</h1>
+<p>This week: our new product launch, a customer story, and upcoming events.</p>
+<p><a href="https://acme-newsletter.com/issue-42/product-launch">Read about our new product launch</a></p>
+<p><a href="https://acme-newsletter.com/issue-42/customer-story">Customer spotlight: how Acme helped a customer ship faster</a></p>
+<hr>
+<p style="font-size:12px;color:#888;">
+You are receiving this email because you subscribed to Acme Weekly.<br>
+<a href="https://acme.us1.list-manage.com/unsubscribe?u=abc123&id=def456">Unsubscribe</a> |
+<a href="https://acme.us1.list-manage.com/profile?u=abc123&id=def456">Manage your preferences</a>
+</p>
+</body>
+</html>
+
+--BOUNDARY1--
