@@ -22,7 +22,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .. import access
 from .. import storage_d1 as storage
-from .assets import LOGO_PNG_BASE64
+from .assets import FAVICON_ICO_BASE64, LOGO_PNG_BASE64
 
 app = FastAPI(title="Newsletter Archive")
 
@@ -56,11 +56,18 @@ body {
 }
 
 .site-header {
-  padding: 1rem 1.5rem; border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   background: var(--card-bg);
+}
+.site-header-inner {
+  max-width: 900px; margin: 0 auto; padding: 0.9rem 2rem;
   display: flex; align-items: center; justify-content: space-between; gap: 1rem;
 }
-.site-title { color: var(--asu-maroon); font-weight: 700; text-decoration: none; font-size: 1.1rem; }
+.site-header-inner.wide { max-width: 1150px; }
+.site-brand { display: flex; align-items: center; text-decoration: none; }
+.site-titles { display: flex; flex-direction: column; line-height: 1.25; }
+.site-title { color: var(--asu-maroon); font-weight: 700; font-size: 1.1rem; }
+.site-subtitle { color: var(--text-muted); font-size: 0.75rem; }
 .header-right { display: flex; align-items: center; gap: 1rem; }
 .admin-link {
   color: var(--asu-maroon); font-size: 0.85rem; font-weight: 600; text-decoration: none;
@@ -140,14 +147,17 @@ main > h1 {
   background: rgba(255, 255, 255, 0.9); color: var(--text-primary); font-size: 0.9rem;
 }
 .date-form input:focus { outline: 2px solid var(--asu-gold); border-color: var(--asu-maroon); }
-.date-form button {
+.date-form button, .secondary-btn {
   padding: 0.4rem 0.8rem; border: 1px solid var(--asu-maroon); border-radius: 6px;
   background: #fff; color: var(--asu-maroon); font-weight: 600; font-size: 0.85rem; cursor: pointer;
+  font-family: inherit;
 }
-.date-form button:hover { background: var(--asu-maroon); color: #fff; }
+.date-form button:hover, .secondary-btn:hover { background: var(--asu-maroon); color: #fff; }
 
 .sidebar .date-form { flex-direction: column; align-items: stretch; gap: 0.35rem; margin-top: 0; }
 .sidebar .date-form label { font-size: 0.8rem; color: var(--text-muted); }
+.sidebar .secondary-form { display: block; margin-top: 0.75rem; }
+.sidebar .secondary-btn { width: 100%; padding: 0.5rem 0.7rem; }
 .sidebar .delete-form { display: block; margin-top: 1rem; }
 .sidebar .delete-btn { width: 100%; padding: 0.5rem 0.7rem; }
 
@@ -199,20 +209,28 @@ _TEMPLATES = {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Newsletter Archive{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="/favicon.ico">
 </head>
 <body>
   <header class="site-header">
-    <a class="site-title" href="/">Newsletter Archive</a>
-    <div class="header-right">
-      {% if is_super_admin %}<a class="admin-link" href="/admin">Admin</a>{% endif %}
-      {% if identity_display %}
-        <div class="identity">
-          <div class="identity-name">{{ identity_display }}</div>
-          {% if identity_email and identity_email != identity_display %}
-            <div class="identity-email">{{ identity_email }}</div>
-          {% endif %}
-        </div>
-      {% endif %}
+    <div class="site-header-inner {{ self.main_class() }}">
+      <a class="site-brand" href="/">
+        <span class="site-titles">
+          <span class="site-title">Newsletter Archive</span>
+          <span class="site-subtitle">Center for Evolution and Medicine</span>
+        </span>
+      </a>
+      <div class="header-right">
+        {% if is_super_admin %}<a class="admin-link" href="/admin">Admin</a>{% endif %}
+        {% if identity_display %}
+          <div class="identity">
+            <div class="identity-name">{{ identity_display }}</div>
+            {% if identity_email and identity_email != identity_display %}
+              <div class="identity-email">{{ identity_email }}</div>
+            {% endif %}
+          </div>
+        {% endif %}
+      </div>
     </div>
   </header>
   <main class="{% block main_class %}{% endblock %}">
@@ -374,6 +392,9 @@ _TEMPLATES = {
             <input type="date" id="received_at" name="received_at" value="{{ (newsletter.received_at or newsletter.created_at)[:10] }}">
             <button type="submit">Update date</button>
           </form>
+          <form class="secondary-form" method="post" action="/n/{{ newsletter.slug }}/reprocess" title="Re-run link resolution and unsubscribe-link cleanup against the original email">
+            <button type="submit" class="secondary-btn">Reprocess links</button>
+          </form>
           <form class="delete-form" method="post" action="/n/{{ newsletter.slug }}/delete" onsubmit="return confirm('Delete this newsletter?');">
             <button type="submit" class="delete-btn">Delete this newsletter</button>
           </form>
@@ -492,6 +513,11 @@ async def style_css():
 @app.get("/static/logo.png")
 async def logo_png():
     return Response(content=base64.b64decode(LOGO_PNG_BASE64), media_type="image/png")
+
+
+@app.get("/favicon.ico")
+async def favicon_ico():
+    return Response(content=base64.b64decode(FAVICON_ICO_BASE64), media_type="image/x-icon")
 
 
 @app.get("/")
@@ -618,6 +644,27 @@ async def update_newsletter_date(request: Request, slug: str):
 
     received_at = parsed_date.replace(tzinfo=timezone.utc).isoformat()
     await storage.update_received_at(_db(request), slug, received_at)
+    return RedirectResponse(url=f"/n/{slug}", status_code=303)
+
+
+@app.post("/n/{slug}/reprocess")
+async def reprocess_newsletter(request: Request, slug: str):
+    """Re-run the parse/resolve/sanitize pipeline against this newsletter's stored
+    raw_eml and overwrite sanitized_html in place. Same admin gate as delete/date-edit."""
+    email, _identity_display = await _current_user(request)
+    if not email:
+        raise HTTPException(status_code=404, detail="Newsletter not found")
+
+    newsletter = await storage.get_by_slug(_db(request), slug)
+    if newsletter is None:
+        raise HTTPException(status_code=404, detail="Newsletter not found")
+
+    if not await _can_administer(request, email, newsletter):
+        raise HTTPException(status_code=403, detail="Not an admin for this newsletter's sender")
+
+    from worker_entry import reprocess_via_d1
+
+    await reprocess_via_d1(slug, _db(request))
     return RedirectResponse(url=f"/n/{slug}", status_code=303)
 
 

@@ -103,6 +103,18 @@ async def get_by_slug(db, slug: str) -> Newsletter | None:
     return _row_to_newsletter(row) if row else None
 
 
+async def get_raw_eml(db, slug: str) -> tuple[bytes, str] | None:
+    """(raw_eml, to_address) for reprocessing -- raw_eml is deliberately excluded from
+    _LIST_COLUMNS/_DETAIL_COLUMNS so normal page views don't load that blob; this is a
+    narrow query just for the reprocess path."""
+    row = await db.prepare("SELECT raw_eml, to_address FROM newsletters WHERE slug = ?").bind(slug).first()
+    return (row["raw_eml"], row["to_address"]) if row else None
+
+
+async def update_sanitized_html(db, slug: str, sanitized_html: str | None) -> None:
+    await db.prepare("UPDATE newsletters SET sanitized_html = ? WHERE slug = ?").bind(sanitized_html, slug).run()
+
+
 async def get_image(db, slug: str, content_id: str) -> tuple[str, bytes] | None:
     row = await (
         db.prepare(

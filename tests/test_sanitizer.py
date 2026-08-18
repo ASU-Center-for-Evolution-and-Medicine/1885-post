@@ -3,7 +3,11 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 from newsletter_archive.parser import parse_email
-from newsletter_archive.sanitizer import neutralize_unsubscribe_links
+from newsletter_archive.sanitizer import (
+    find_trackable_links,
+    neutralize_unsubscribe_links,
+    rewrite_tracked_links,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -48,3 +52,63 @@ def test_all_visible_text_content_is_preserved():
     original_text = BeautifulSoup(html, "html.parser").get_text()
     sanitized_text = BeautifulSoup(sanitized, "html.parser").get_text()
     assert original_text == sanitized_text
+
+
+def test_find_trackable_links_matches_configured_domain_only():
+    html = (
+        '<a href="https://click.reply.asu.edu/?qs=abc123">Read more</a>'
+        '<a href="https://example.com/direct-link">Direct link</a>'
+    )
+    assert find_trackable_links(html) == {"https://click.reply.asu.edu/?qs=abc123"}
+
+
+def test_rewrite_tracked_links_only_touches_resolved_hrefs():
+    html = (
+        '<a href="https://click.reply.asu.edu/?qs=abc123">Read more</a>'
+        '<a href="https://example.com/direct-link">Direct link</a>'
+    )
+    resolved = {"https://click.reply.asu.edu/?qs=abc123": "https://evmed.asu.edu/real-article"}
+    rewritten = rewrite_tracked_links(html, resolved)
+    soup = BeautifulSoup(rewritten, "html.parser")
+    links_by_text = {a.get_text(strip=True): a["href"] for a in soup.find_all("a", href=True)}
+
+    assert links_by_text["Read more"] == "https://evmed.asu.edu/real-article"
+    assert links_by_text["Direct link"] == "https://example.com/direct-link"
+
+
+def test_resolved_smc_unsubscribe_link_gets_neutralized():
+    # The whole point of resolving before classifying: a tracked href reveals nothing
+    # about the destination, so neutralize_unsubscribe_links can only catch SMC's real
+    # unsubscribe/preference-center link once it's been resolved.
+    html = (
+        '<a href="https://click.reply.asu.edu/?qs=xyz">Update Profile</a>'
+        '<a href="https://click.reply.asu.edu/?qs=abc">Read the newsletter</a>'
+    )
+    resolved = {
+        "https://click.reply.asu.edu/?qs=xyz": "https://view.email.asu.edu/subscriptioncenter.aspx?qs=xyz",
+        "https://click.reply.asu.edu/?qs=abc": "https://evmed.asu.edu/real-article",
+    }
+    sanitized = neutralize_unsubscribe_links(rewrite_tracked_links(html, resolved))
+    soup = BeautifulSoup(sanitized, "html.parser")
+    links_by_text = {a.get_text(strip=True): a["href"] for a in soup.find_all("a", href=True)}
+
+    assert links_by_text["Update Profile"] == "#"
+    assert links_by_text["Read the newsletter"] == "https://evmed.asu.edu/real-article"
+
+
+def test_smc_profile_center_link_is_neutralized_even_unresolved():
+    # Real-world case verified against live archived newsletters: "Update Profile"
+    # points at click.reply.asu.edu/profile_center.aspx directly (SMC serves this page
+    # on the tracking domain itself -- no redirect happens), so this must be caught by
+    # href pattern alone even if resolution never runs or fails.
+    html = (
+        '<a href="https://click.reply.asu.edu/profile_center.aspx?qs=ABB7abc123">Update Profile</a>'
+        '<a href="https://click.reply.asu.edu/?qs=abc">Read the newsletter</a>'
+    )
+    sanitized = neutralize_unsubscribe_links(html)
+    soup = BeautifulSoup(sanitized, "html.parser")
+    links_by_text = {a.get_text(strip=True): a["href"] for a in soup.find_all("a", href=True)}
+
+    assert links_by_text["Update Profile"] == "#"
+    # untouched -- still the tracked link, since this test doesn't resolve it
+    assert links_by_text["Read the newsletter"] == "https://click.reply.asu.edu/?qs=abc"
