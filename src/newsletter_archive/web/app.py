@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import os
+import secrets
 from datetime import datetime, timezone
 from urllib.parse import parse_qs
 
@@ -100,6 +101,18 @@ main > h1 {
 .sidebar { width: 240px; flex-shrink: 0; }
 .content { flex: 1; min-width: 0; }
 
+.admin-sidebar {
+  background: var(--asu-sand);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.25rem;
+  box-shadow:
+    0 6px 16px -6px rgba(140, 29, 64, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    inset 0 -1px 0 rgba(140, 29, 64, 0.12);
+}
+.admin-sidebar .sidebar-section { margin-bottom: 0; }
+
 .sidebar-section { margin-bottom: 1.75rem; }
 .sidebar-section h2 {
   font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em;
@@ -162,11 +175,13 @@ main > h1 {
 .sidebar .delete-btn { width: 100%; padding: 0.5rem 0.7rem; }
 
 .admin-form { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0 1.5rem; }
-.admin-form input {
+.admin-form input, .admin-form select {
   padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 8px;
   background: rgba(255, 255, 255, 0.9); color: var(--text-primary); flex: 1; min-width: 200px; font-size: 1rem;
 }
-.admin-form input:focus { outline: 2px solid var(--asu-gold); border-color: var(--asu-maroon); }
+.admin-form input[type="number"] { flex: 0 0 auto; min-width: 0; width: 5rem; }
+.admin-form select { flex: 0 0 auto; min-width: 0; width: auto; }
+.admin-form input:focus, .admin-form select:focus { outline: 2px solid var(--asu-gold); border-color: var(--asu-maroon); }
 .admin-form button {
   padding: 0.6rem 1rem; border: none; border-radius: 8px;
   background: var(--asu-maroon); color: #fff; font-weight: 600; cursor: pointer;
@@ -179,6 +194,17 @@ main > h1 {
   text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); font-size: 0.9rem;
 }
 .admin-table th { color: var(--text-muted); font-weight: 600; }
+.embed-snippet {
+  display: block; font-size: 0.72rem; background: var(--asu-sand); color: var(--text-primary);
+  padding: 0.3rem 0.5rem; border-radius: 6px; margin-bottom: 0.35rem; word-break: break-all;
+}
+.copy-btn { font-size: 0.78rem; padding: 0.3rem 0.6rem; }
+.cancel-link { align-self: center; color: var(--text-muted); font-size: 0.85rem; text-decoration: underline; }
+.edit-link {
+  color: var(--asu-maroon); font-size: 0.8rem; font-weight: 600; text-decoration: none;
+  margin-right: 0.75rem;
+}
+.edit-link:hover { text-decoration: underline; }
 
 .permalink-meta { margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
 .permalink-meta h1 {
@@ -221,6 +247,7 @@ _TEMPLATES = {
         </span>
       </a>
       <div class="header-right">
+        {% if identity_display %}<a class="admin-link" href="/help">Help</a>{% endif %}
         {% if is_super_admin %}<a class="admin-link" href="/admin">Admin</a>{% endif %}
         {% if identity_display %}
           <div class="identity">
@@ -367,8 +394,18 @@ _TEMPLATES = {
           if (doc.body && window.ResizeObserver) {
             new ResizeObserver(resize).observe(doc.body);
           }
+          // Tie re-measurement directly to each image's own load/error event, rather
+          // than only guessing with fixed delays -- covers slow/external image hosts
+          // that could still be settling after `load` fires in some browsers.
+          Array.from(doc.images || []).forEach((img) => {
+            if (!img.complete) {
+              img.addEventListener("load", resize);
+              img.addEventListener("error", resize);
+            }
+          });
           setTimeout(resize, 300);
           setTimeout(resize, 1000);
+          setTimeout(resize, 2500);
         } catch (err) {
           // Never leave the frame stuck at the browser's tiny default height because
           // of an unexpected error in here -- the CSS min-height fallback covers it.
@@ -384,7 +421,7 @@ _TEMPLATES = {
     </div>
 
     {% if is_super_admin or is_admin %}
-      <aside class="sidebar">
+      <aside class="sidebar admin-sidebar">
         <div class="sidebar-section">
           <h2>Admin</h2>
           <form class="date-form" method="post" action="/n/{{ newsletter.slug }}/date">
@@ -404,30 +441,124 @@ _TEMPLATES = {
   </div>
 {% endblock %}
 """,
+    "help.html": """{% extends "base.html" %}
+{% block title %}Help · Newsletter Archive{% endblock %}
+{% block content %}
+  <h1>Help</h1>
+
+  <h2>Get your newsletter into the archive</h2>
+  <p class="meta">Send (or CC/BCC) your newsletter to <strong>newsletters@evmed.app</strong>
+  when you send it out. It shows up on the <a href="/">homepage</a> automatically within
+  moments -- no extra steps. Unsubscribe / manage-preferences links are automatically
+  disabled in the archived copy (so the public archive can't be used to unsubscribe
+  someone); everything else, including all your regular content links, is preserved
+  exactly as sent.</p>
+
+  <h2>Add a "recent newsletters" widget to your department website</h2>
+  <p class="meta">Any of the newsletters in the archive can be embedded as a small,
+  public widget on another website -- no login required for people viewing it, and
+  clicking a newsletter opens the full thing. Any logged-in archive user can create one,
+  no admin access needed:</p>
+  <ol class="meta">
+    <li>Go to <a href="/admin">/admin</a>.</li>
+    <li>Under <strong>Embeds</strong>, fill in a name, a sender email to filter to
+    (leave blank to show newsletters from <em>all</em> senders), how many to show (0
+    shows all of them), and sort order, then <strong>Create embed</strong>.</li>
+    <li>Click <strong>Copy iframe code</strong> next to it and paste that directly into
+    your website's HTML.</li>
+  </ol>
+  <p class="meta">You can revisit <a href="/admin">/admin</a> any time to
+  <strong>Edit</strong> an embed you created (updates what it shows without breaking the
+  link you already pasted somewhere) or <strong>Revoke</strong> it (immediately stops it
+  from working anywhere it's embedded). Editing or revoking an embed someone else
+  created requires admin access for that embed's sender.</p>
+
+  <h2>Don't have admin access yet?</h2>
+  <p class="meta">Admin access is per sending address -- it lets you delete newsletters
+  from that sender in the archive, backdate them (useful for backfilling old issues),
+  and edit/revoke embeds scoped to that sender even if you didn't create them. It's not
+  needed just to create your own embeds.</p>
+  <p class="meta">Contact Suhail
+  (<a href="mailto:suhail.ghafoor@asu.edu">suhail.ghafoor@asu.edu</a>) to be set up as an
+  admin for your sending address.</p>
+{% endblock %}
+""",
     "admin.html": """{% extends "base.html" %}
 {% block title %}Admin · Newsletter Archive{% endblock %}
 {% block content %}
   <h1>Admin</h1>
-  <p class="meta">Grant a user admin rights over a sender: they'll be able to delete
-  newsletters *from* that sender address. Every authenticated user can already view
-  everything, regardless of grants.</p>
 
-  <form class="admin-form" method="post" action="/admin/grants">
-    <input type="email" name="user_email" placeholder="user@example.com" required>
-    <input type="text" name="from_email" placeholder="news@sender.com" required>
-    <button type="submit">Grant</button>
+  {% if is_super_admin %}
+    <h2>Grants</h2>
+    <p class="meta">Grant a user admin rights over a sender: they'll be able to delete
+    newsletters *from* that sender address, backdate them, and edit/revoke embeds scoped
+    to it even if someone else created them. Every authenticated user can already view
+    everything, and can already create their own embeds for any sender, regardless of
+    grants.</p>
+
+    <form class="admin-form" method="post" action="/admin/grants">
+      <input type="email" name="user_email" placeholder="user@example.com" required>
+      <input type="text" name="from_email" placeholder="news@sender.com" required>
+      <button type="submit">Grant</button>
+    </form>
+
+    {% if grants %}
+      <table class="admin-table">
+        <thead><tr><th>User</th><th>Sender (from)</th><th></th></tr></thead>
+        <tbody>
+          {% for g in grants %}
+            <tr>
+              <td>{{ g.user_email }}</td>
+              <td>{{ g.from_email }}</td>
+              <td>
+                <form class="delete-form" method="post" action="/admin/grants/{{ g.id }}/delete" onsubmit="return confirm('Revoke this grant?');">
+                  <button type="submit" class="delete-btn">Revoke</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty">No admin grants yet.</p>
+    {% endif %}
+  {% endif %}
+
+  <h2>Embeds</h2>
+  <p class="meta">Publish a public, unauthenticated list of recent newsletters (optionally
+  filtered by sender) for embedding as an iframe on a department website -- no login
+  required to view it or open a newsletter from it. Revoke to break every iframe using it
+  immediately; edit to change what an existing embed shows without breaking its URL.</p>
+
+  <form class="admin-form" method="post" action="{{ ('/admin/embeds/' ~ edit_embed.token ~ '/edit') if edit_embed else '/admin/embeds' }}">
+    <input type="text" name="name" placeholder="Name, e.g. CEM homepage widget" value="{{ edit_embed.name if edit_embed else '' }}" required>
+    <input type="text" name="sender_email" placeholder="Sender email (blank = all senders)" value="{{ edit_embed.sender_email or '' if edit_embed else '' }}">
+    <input type="number" name="result_limit" value="{{ edit_embed.result_limit if edit_embed else 5 }}" min="0" max="50" title="0 shows all newsletters">
+    <select name="sort">
+      <option value="newest" {{ "selected" if edit_embed and edit_embed.sort != "oldest" }}>Newest first</option>
+      <option value="oldest" {{ "selected" if edit_embed and edit_embed.sort == "oldest" }}>Oldest first</option>
+    </select>
+    <button type="submit">{{ "Save changes" if edit_embed else "Create embed" }}</button>
+    {% if edit_embed %}<a href="/admin" class="cancel-link">Cancel</a>{% endif %}
   </form>
+  <p class="meta" style="margin-top: -0.75rem;">Limit: 0 shows every matching newsletter.</p>
 
-  {% if grants %}
+  {% if embeds %}
     <table class="admin-table">
-      <thead><tr><th>User</th><th>Sender (from)</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Sender</th><th>Shows</th><th>Embed code</th><th></th></tr></thead>
       <tbody>
-        {% for g in grants %}
+        {% for e in embeds %}
           <tr>
-            <td>{{ g.user_email }}</td>
-            <td>{{ g.from_email }}</td>
+            <td>{{ e.name }}</td>
+            <td>{{ e.sender_email or "All senders" }}</td>
+            <td>{{ "All" if e.result_limit == 0 else "Last " ~ e.result_limit }}, {{ "oldest" if e.sort == "oldest" else "newest" }} first</td>
             <td>
-              <form class="delete-form" method="post" action="/admin/grants/{{ g.id }}/delete" onsubmit="return confirm('Revoke this grant?');">
+              <code class="embed-snippet">{{ base_url }}/embed/{{ e.token }}</code>
+              <button type="button" class="secondary-btn copy-btn" data-url="{{ base_url }}/embed/{{ e.token }}">Copy iframe code</button>
+            </td>
+            <td>
+              <a href="/admin?edit={{ e.token }}" class="edit-link">Edit</a>
+              <form class="delete-form" method="post" action="/admin/embeds/{{ e.token }}/delete" onsubmit="return confirm('Revoke this embed? Any iframe using it will break immediately.');">
                 <button type="submit" class="delete-btn">Revoke</button>
               </form>
             </td>
@@ -436,9 +567,56 @@ _TEMPLATES = {
       </tbody>
     </table>
   {% else %}
-    <p class="empty">No admin grants yet.</p>
+    <p class="empty">No embeds yet.</p>
   {% endif %}
+
+  <script>
+    document.querySelectorAll(".copy-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const snippet = `<iframe src="${btn.dataset.url}" width="100%" height="400" style="border:0;"></iframe>`;
+        navigator.clipboard.writeText(snippet).then(() => {
+          const original = btn.textContent;
+          btn.textContent = "Copied!";
+          setTimeout(() => { btn.textContent = original; }, 1500);
+        });
+      });
+    });
+  </script>
 {% endblock %}
+""",
+    "embed_list.html": """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>{{ embed.name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    body { margin: 0; padding: 0.75rem 1rem; }
+    .embed-list { list-style: none; margin: 0; padding: 0; }
+    .embed-list li { padding: 0.6rem 0; border-bottom: 1px solid var(--border); }
+    .embed-list li:last-child { border-bottom: none; }
+    .embed-date { color: var(--asu-maroon); font-weight: 700; font-size: 0.9rem; margin-bottom: 0.15rem; }
+    .embed-list a { color: var(--text-primary); font-weight: 600; text-decoration: none; font-size: 0.95rem; }
+    .embed-list a:hover { color: var(--asu-maroon); }
+  </style>
+</head>
+<body>
+  {% if newsletters %}
+    <ul class="embed-list">
+      {% for n in newsletters %}
+        <li>
+          <div class="embed-date">{{ (n.received_at or n.created_at)|humandate }}</div>
+          <a href="/embed/{{ token }}/n/{{ n.slug }}" target="_blank" rel="noopener">{{ n.subject }}</a>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="empty">No newsletters yet.</p>
+  {% endif %}
+</body>
+</html>
 """,
 }
 
@@ -668,19 +846,61 @@ async def reprocess_newsletter(request: Request, slug: str):
     return RedirectResponse(url=f"/n/{slug}", status_code=303)
 
 
-@app.get("/admin")
-async def admin_dashboard(request: Request):
+@app.get("/help")
+async def help_page(request: Request):
     email, identity_display = await _current_user(request)
-    if not email or not _is_super_admin(request, email):
+    if not email:
         raise HTTPException(status_code=404, detail="Not found")
 
-    grants = await storage.list_admin_grants(_db(request))
+    return _render(
+        "help.html",
+        identity_display=identity_display,
+        identity_email=email,
+        is_super_admin=_is_super_admin(request, email),
+    )
+
+
+@app.get("/admin")
+async def admin_dashboard(request: Request, edit: str | None = None):
+    """Any authenticated user can reach this page to create/manage their own embeds --
+    embed creation isn't an admin-gated action (see create_embed). Grants stay super-admin
+    only (granting admin rights out to others is a higher-trust action), and the embeds
+    table only lists ones this user is allowed to manage: everything for a super admin,
+    or (their own + their administered senders') for everyone else.
+
+    ?edit={token} pre-fills the embed form for editing that embed in place (same token,
+    same URL, so any iframe already using it keeps working) instead of creating a new one.
+    """
+    email, identity_display = await _current_user(request)
+    if not email:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    is_super = _is_super_admin(request, email)
+    admin_senders = await storage.list_admin_senders(_db(request), email)
+
+    grants = await storage.list_admin_grants(_db(request)) if is_super else []
+    all_embeds = await storage.list_embed_queries(_db(request))
+    embeds = (
+        all_embeds
+        if is_super
+        else [e for e in all_embeds if e.sender_email in admin_senders or e.created_by == email]
+    )
+
+    edit_embed = None
+    if edit:
+        edit_embed = await storage.get_embed_query(_db(request), edit)
+        if edit_embed is not None and not await _can_manage_embed(request, email, edit_embed):
+            raise HTTPException(status_code=403, detail="Not allowed to edit this embed")
+
     return _render(
         "admin.html",
         grants=grants,
+        embeds=embeds,
+        edit_embed=edit_embed,
+        base_url=str(request.base_url).rstrip("/"),
         identity_display=identity_display,
         identity_email=email,
-        is_super_admin=True,
+        is_super_admin=is_super,
     )
 
 
@@ -706,6 +926,147 @@ async def delete_admin_grant(request: Request, grant_id: int):
 
     await storage.delete_admin_grant(_db(request), grant_id)
     return RedirectResponse(url="/admin", status_code=303)
+
+
+async def _can_manage_embed(request: Request, email: str, embed: storage.EmbedQuery) -> bool:
+    """True if `email` may edit/delete this embed: whoever created it, an admin of its
+    sender, or the super admin. Creating an embed in the first place is open to any
+    authenticated user regardless of sender -- an embed only ever surfaces newsletters
+    that user could already view -- so this narrower check only guards against a
+    stranger editing/revoking someone else's already-published, possibly-live-embedded
+    widget."""
+    if _is_super_admin(request, email):
+        return True
+    if embed.created_by == email:
+        return True
+    if embed.sender_email:
+        admin_senders = await storage.list_admin_senders(_db(request), email)
+        if embed.sender_email in admin_senders:
+            return True
+    return False
+
+
+def _parse_embed_form(form: dict[str, str]) -> tuple[str, str | None, int, str]:
+    """(name, sender_email, result_limit, sort) from a create/edit embed form submission."""
+    name = (form.get("name") or "").strip()
+    sender_email = (form.get("sender_email") or "").strip().lower() or None
+    sort = "oldest" if form.get("sort") == "oldest" else "newest"
+    try:
+        result_limit = int(form.get("result_limit") or 5)
+    except ValueError:
+        result_limit = 5
+    if result_limit != 0:
+        result_limit = max(1, min(50, result_limit))  # 0 is the deliberate "show all" sentinel
+    return name, sender_email, result_limit, sort
+
+
+@app.post("/admin/embeds")
+async def create_embed(request: Request):
+    """Any authenticated user can create an embed for any sender (or all senders) --
+    an embed only ever exposes newsletters that user could already view on the site, so
+    this isn't a meaningful new grant of access. Editing/revoking someone else's embed
+    is the narrower, admin-gated action -- see _can_manage_embed."""
+    email, _identity_display = await _current_user(request)
+    if not email:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    form = await _parse_form(request)
+    name, sender_email, result_limit, sort = _parse_embed_form(form)
+
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+
+    await storage.create_embed_query(
+        _db(request),
+        token=secrets.token_urlsafe(16),
+        name=name,
+        sender_email=sender_email,
+        result_limit=result_limit,
+        sort=sort,
+        created_by=email,
+    )
+    return RedirectResponse(url="/admin", status_code=303)
+
+
+@app.post("/admin/embeds/{token}/edit")
+async def edit_embed(request: Request, token: str):
+    email, _identity_display = await _current_user(request)
+    if not email:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    embed = await storage.get_embed_query(_db(request), token)
+    if embed is None:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    if not await _can_manage_embed(request, email, embed):
+        raise HTTPException(status_code=403, detail="Not allowed to edit this embed")
+
+    form = await _parse_form(request)
+    name, sender_email, result_limit, sort = _parse_embed_form(form)
+
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+
+    await storage.update_embed_query(
+        _db(request), token, name=name, sender_email=sender_email, result_limit=result_limit, sort=sort
+    )
+    return RedirectResponse(url="/admin", status_code=303)
+
+
+@app.post("/admin/embeds/{token}/delete")
+async def delete_embed(request: Request, token: str):
+    email, _identity_display = await _current_user(request)
+    if not email:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    embed = await storage.get_embed_query(_db(request), token)
+    if embed is None:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    if not await _can_manage_embed(request, email, embed):
+        raise HTTPException(status_code=403, detail="Not allowed to revoke this embed")
+    await storage.delete_embed_query(_db(request), token)
+    return RedirectResponse(url="/admin", status_code=303)
+
+
+@app.get("/embed/{token}")
+async def embed_list(request: Request, token: str):
+    """Public, unauthenticated -- deliberately doesn't call _current_user. Exists behind
+    a Cloudflare Access Bypass policy scoped to /embed/*; see the plan for why this is
+    safe (the token is the security boundary, re-validated server-side, not Access)."""
+    embed = await storage.get_embed_query(_db(request), token)
+    if embed is None:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    newsletters = await storage.list_newsletters(
+        _db(request), sender=embed.sender_email, sort=embed.sort, limit=embed.result_limit
+    )
+    return _render("embed_list.html", token=token, embed=embed, newsletters=newsletters)
+
+
+@app.get("/embed/{token}/n/{slug}")
+async def embed_permalink(request: Request, token: str, slug: str):
+    """Public, unauthenticated. Re-validates the newsletter actually matches this
+    embed's saved sender filter on every request -- the slug alone isn't enough to view
+    it, so this can't be used to read an unrelated newsletter for free."""
+    embed = await storage.get_embed_query(_db(request), token)
+    if embed is None:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    newsletter = await storage.get_by_slug(_db(request), slug)
+    if newsletter is None:
+        raise HTTPException(status_code=404, detail="Newsletter not found")
+    if embed.sender_email and newsletter.from_email != embed.sender_email:
+        raise HTTPException(status_code=404, detail="Newsletter not found")
+
+    return _render(
+        "permalink.html",
+        newsletter=newsletter,
+        identity_display=None,
+        identity_email=None,
+        is_admin=False,
+        is_super_admin=False,
+    )
 
 
 @app.post("/ingest")

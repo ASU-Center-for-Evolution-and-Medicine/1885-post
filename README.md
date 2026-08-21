@@ -8,6 +8,10 @@ archive pages.
 **Live:** https://newsletter-archive.suhail-ghafoor8737.workers.dev (account:
 `Suhail.ghafoor@asu.edu's Account`, id `3ed0332b4053248f9a25eedf3c741b54`)
 
+This README is for developing/deploying the code. For how colleagues actually use the
+archive (getting a newsletter in, embedding a widget on a department site, requesting
+admin access), see [USAGE.md](USAGE.md).
+
 ## Architecture
 
 - `src/newsletter_archive/parser.py`, `sanitizer.py`, `slug.py` — pure logic, no I/O:

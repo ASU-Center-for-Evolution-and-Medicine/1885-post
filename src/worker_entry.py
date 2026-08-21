@@ -35,7 +35,17 @@ from newsletter_archive.slug import make_slug
 from newsletter_archive.web.app import app
 
 
-async def resolve_link(url: str) -> str:
+# Cloudflare Workers caps total subrequests (fetch calls + D1 queries) per invocation --
+# confirmed in production ("AbortError: Too many subrequests by single Worker
+# invocation") on a newsletter with ~24 tracked links. Concurrency throttling alone
+# doesn't help (the cap is cumulative, not simultaneous), so new resolutions are also
+# capped per run; get_resolved_links/save_resolved_links (storage_d1.py) make repeat
+# runs incremental instead of restarting from zero and hitting the same wall every time.
+_MAX_CONCURRENT_RESOLUTIONS = 6
+_MAX_NEW_RESOLUTIONS_PER_RUN = 20
+
+
+async def resolve_link(url: str, semaphore: asyncio.Semaphore) -> str:
     """Follow a tracked link's redirect chain to its real, permanent destination.
 
     Fails open (keeps the original tracked URL) on any error -- a live tracked link
@@ -43,14 +53,38 @@ async def resolve_link(url: str) -> str:
     platform-level subrequest limits, so a hand-rolled AbortController timeout isn't
     needed to avoid hanging the request.
     """
-    try:
-        resp = await workers_fetch(url)
-        return resp.url or url
-    except Exception:
-        return url
+    async with semaphore:
+        try:
+            resp = await workers_fetch(url)
+            return resp.url or url
+        except Exception as exc:
+            print(f"resolve_link failed for {url!r}: {exc!r}")
+            return url
 
 
-async def _build_sanitized_html(parsed, slug: str) -> str | None:
+async def _resolve_tracked_links_in(html: str, db) -> str:
+    tracked = find_trackable_links(html)
+    if not tracked:
+        return html
+
+    cached = await storage.get_resolved_links(db, list(tracked))
+    to_resolve = [url for url in tracked if url not in cached][:_MAX_NEW_RESOLUTIONS_PER_RUN]
+
+    resolved = dict(cached)
+    if to_resolve:
+        semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RESOLUTIONS)
+        results = await asyncio.gather(*(resolve_link(url, semaphore) for url in to_resolve))
+        newly_resolved = {}
+        for url, result in zip(to_resolve, results):
+            resolved[url] = result
+            if result != url:  # only persist genuine successes, not fail-open no-ops
+                newly_resolved[url] = result
+        await storage.save_resolved_links(db, newly_resolved)
+
+    return rewrite_tracked_links(html, resolved)
+
+
+async def _build_sanitized_html(parsed, slug: str, db) -> str | None:
     """The full body-rewrite pipeline, shared by fresh ingestion and reprocessing an
     already-archived newsletter's stored raw_eml: resolve tracked links to their real
     destination *before* classifying, since a tracked href is opaque and reveals nothing
@@ -59,11 +93,7 @@ async def _build_sanitized_html(parsed, slug: str) -> str | None:
     if not html:
         return None
 
-    tracked = find_trackable_links(html)
-    if tracked:
-        resolved = dict(zip(tracked, await asyncio.gather(*(resolve_link(url) for url in tracked))))
-        html = rewrite_tracked_links(html, resolved)
-
+    html = await _resolve_tracked_links_in(html, db)
     html = neutralize_unsubscribe_links(html)
 
     if parsed.inline_images:
@@ -86,7 +116,7 @@ async def ingest_via_d1(raw_bytes: bytes, to_address: str, db) -> storage.Newsle
             dt = dt.astimezone(timezone.utc)
         received_at = dt.isoformat()
 
-    html = await _build_sanitized_html(parsed, slug)
+    html = await _build_sanitized_html(parsed, slug, db)
     from_email = parseaddr(parsed.from_address)[1].lower() or None
 
     await storage.insert_newsletter(
@@ -129,7 +159,7 @@ async def reprocess_via_d1(slug: str, db) -> storage.Newsletter | None:
     raw_eml = bytes(raw_eml)
 
     parsed = parse_email(raw_eml)
-    html = await _build_sanitized_html(parsed, slug)
+    html = await _build_sanitized_html(parsed, slug, db)
     await storage.update_sanitized_html(db, slug, html)
 
     newsletter_id = await storage.get_id_by_slug(db, slug)

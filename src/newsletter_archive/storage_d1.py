@@ -230,12 +230,14 @@ async def list_newsletters(
         where = "WHERE from_email = ?"
         params.append(sender)
     direction = "ASC" if sort == "oldest" else "DESC"
+    # SQLite treats a negative LIMIT as "no limit" -- callers pass 0 to mean "all".
+    sql_limit = -1 if limit <= 0 else limit
     result = await (
         db.prepare(
             f"SELECT {_LIST_COLUMNS} FROM newsletters {where} "
             f"ORDER BY received_at {direction}, id {direction} LIMIT ? OFFSET ?"
         )
-        .bind(*params, limit, offset)
+        .bind(*params, sql_limit, offset)
         .all()
     )
     return [_row_to_summary(row) for row in result.results]
@@ -260,4 +262,118 @@ def _row_to_newsletter(row) -> Newsletter:
         **_row_to_summary(row).__dict__,
         sanitized_html=row["sanitized_html"],
         plain_text_fallback=row["plain_text_fallback"],
+    )
+
+
+@dataclass
+class EmbedQuery:
+    id: int
+    token: str
+    name: str
+    sender_email: str | None
+    result_limit: int
+    sort: str
+    created_by: str
+    created_at: str
+
+
+async def create_embed_query(
+    db,
+    *,
+    token: str,
+    name: str,
+    sender_email: str | None,
+    result_limit: int,
+    sort: str,
+    created_by: str,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    await (
+        db.prepare(
+            "INSERT INTO embed_queries (token, name, sender_email, result_limit, sort, created_by, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(token, name, sender_email, result_limit, sort, created_by, now)
+        .run()
+    )
+
+
+async def get_embed_query(db, token: str) -> EmbedQuery | None:
+    row = await db.prepare("SELECT * FROM embed_queries WHERE token = ?").bind(token).first()
+    return _row_to_embed_query(row) if row else None
+
+
+async def list_embed_queries(db) -> list[EmbedQuery]:
+    result = await db.prepare("SELECT * FROM embed_queries ORDER BY created_at DESC").all()
+    return [_row_to_embed_query(row) for row in result.results]
+
+
+async def update_embed_query(
+    db,
+    token: str,
+    *,
+    name: str,
+    sender_email: str | None,
+    result_limit: int,
+    sort: str,
+) -> None:
+    """Edits an existing embed's query in place -- same token, so any iframe already
+    using it keeps working, just serving the newly saved filters going forward."""
+    await (
+        db.prepare(
+            "UPDATE embed_queries SET name = ?, sender_email = ?, result_limit = ?, sort = ? WHERE token = ?"
+        )
+        .bind(name, sender_email, result_limit, sort, token)
+        .run()
+    )
+
+
+async def delete_embed_query(db, token: str) -> None:
+    await db.prepare("DELETE FROM embed_queries WHERE token = ?").bind(token).run()
+
+
+def _row_to_embed_query(row) -> EmbedQuery:
+    return EmbedQuery(
+        id=row["id"],
+        token=row["token"],
+        name=row["name"],
+        sender_email=row["sender_email"],
+        result_limit=row["result_limit"],
+        sort=row["sort"],
+        created_by=row["created_by"],
+        created_at=row["created_at"],
+    )
+
+
+async def get_resolved_links(db, tracked_urls: list[str]) -> dict[str, str]:
+    """Previously-resolved tracked URLs, so repeat resolution runs don't re-spend
+    subrequest budget on links already solved in an earlier (possibly cut-short) run."""
+    if not tracked_urls:
+        return {}
+    placeholders = ",".join("?" for _ in tracked_urls)
+    result = await (
+        db.prepare(f"SELECT tracked_url, resolved_url FROM resolved_links WHERE tracked_url IN ({placeholders})")
+        .bind(*tracked_urls)
+        .all()
+    )
+    return {r["tracked_url"]: r["resolved_url"] for r in result.results}
+
+
+async def save_resolved_links(db, mapping: dict[str, str]) -> None:
+    """Batched as a single multi-row insert (not one write per link) to keep this cheap
+    against the same per-invocation subrequest budget the resolving itself is limited by."""
+    if not mapping:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    values_sql = ", ".join("(?, ?, ?)" for _ in mapping)
+    params: list[str] = []
+    for tracked_url, resolved_url in mapping.items():
+        params.extend([tracked_url, resolved_url, now])
+    await (
+        db.prepare(
+            f"INSERT INTO resolved_links (tracked_url, resolved_url, resolved_at) VALUES {values_sql} "
+            "ON CONFLICT(tracked_url) DO UPDATE SET resolved_url = excluded.resolved_url, resolved_at = excluded.resolved_at"
+        )
+        .bind(*params)
+        .run()
     )

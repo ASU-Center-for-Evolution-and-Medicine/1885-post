@@ -12,16 +12,21 @@ from newsletter_archive.sanitizer import (
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+def _links_by_text(html: str) -> dict[str, str | None]:
+    """href per anchor (by visible text), or None if the anchor has no href at all --
+    neutralize_unsubscribe_links removes the attribute rather than setting href="#"."""
+    soup = BeautifulSoup(html, "html.parser")
+    return {a.get_text(strip=True): a.get("href") for a in soup.find_all("a")}
+
+
 def test_neutralizes_unsubscribe_and_preferences_links_only():
     raw = (FIXTURES / "mailchimp_style.eml").read_bytes()
     html = parse_email(raw).html_body
     sanitized = neutralize_unsubscribe_links(html)
-    soup = BeautifulSoup(sanitized, "html.parser")
+    links_by_text = _links_by_text(sanitized)
 
-    links_by_text = {a.get_text(strip=True): a["href"] for a in soup.find_all("a", href=True)}
-
-    assert links_by_text["Unsubscribe"] == "#"
-    assert links_by_text["Manage your preferences"] == "#"
+    assert links_by_text["Unsubscribe"] is None
+    assert links_by_text["Manage your preferences"] is None
     # content links must be untouched
     assert links_by_text["Read about our new product launch"].startswith(
         "https://acme-newsletter.com/issue-42/product-launch"
@@ -35,13 +40,11 @@ def test_does_not_touch_view_in_browser_or_content_links():
     raw = (FIXTURES / "substack_style.eml").read_bytes()
     html = parse_email(raw).html_body
     sanitized = neutralize_unsubscribe_links(html)
-    soup = BeautifulSoup(sanitized, "html.parser")
-
-    links_by_text = {a.get_text(strip=True): a["href"] for a in soup.find_all("a", href=True)}
+    links_by_text = _links_by_text(sanitized)
 
     assert links_by_text["View this post in your browser"].startswith("https://")
     assert links_by_text["Leave a comment"].startswith("https://")
-    assert links_by_text["Opt out of these emails"] == "#"
+    assert links_by_text["Opt out of these emails"] is None
 
 
 def test_all_visible_text_content_is_preserved():
@@ -69,8 +72,7 @@ def test_rewrite_tracked_links_only_touches_resolved_hrefs():
     )
     resolved = {"https://click.reply.asu.edu/?qs=abc123": "https://evmed.asu.edu/real-article"}
     rewritten = rewrite_tracked_links(html, resolved)
-    soup = BeautifulSoup(rewritten, "html.parser")
-    links_by_text = {a.get_text(strip=True): a["href"] for a in soup.find_all("a", href=True)}
+    links_by_text = _links_by_text(rewritten)
 
     assert links_by_text["Read more"] == "https://evmed.asu.edu/real-article"
     assert links_by_text["Direct link"] == "https://example.com/direct-link"
@@ -89,10 +91,9 @@ def test_resolved_smc_unsubscribe_link_gets_neutralized():
         "https://click.reply.asu.edu/?qs=abc": "https://evmed.asu.edu/real-article",
     }
     sanitized = neutralize_unsubscribe_links(rewrite_tracked_links(html, resolved))
-    soup = BeautifulSoup(sanitized, "html.parser")
-    links_by_text = {a.get_text(strip=True): a["href"] for a in soup.find_all("a", href=True)}
+    links_by_text = _links_by_text(sanitized)
 
-    assert links_by_text["Update Profile"] == "#"
+    assert links_by_text["Update Profile"] is None
     assert links_by_text["Read the newsletter"] == "https://evmed.asu.edu/real-article"
 
 
@@ -106,9 +107,8 @@ def test_smc_profile_center_link_is_neutralized_even_unresolved():
         '<a href="https://click.reply.asu.edu/?qs=abc">Read the newsletter</a>'
     )
     sanitized = neutralize_unsubscribe_links(html)
-    soup = BeautifulSoup(sanitized, "html.parser")
-    links_by_text = {a.get_text(strip=True): a["href"] for a in soup.find_all("a", href=True)}
+    links_by_text = _links_by_text(sanitized)
 
-    assert links_by_text["Update Profile"] == "#"
+    assert links_by_text["Update Profile"] is None
     # untouched -- still the tracked link, since this test doesn't resolve it
     assert links_by_text["Read the newsletter"] == "https://click.reply.asu.edu/?qs=abc"

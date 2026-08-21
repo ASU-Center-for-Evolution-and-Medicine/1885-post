@@ -16,8 +16,7 @@ def test_ingest_stores_and_returns_newsletter():
     assert newsletter.to_address == "newsletter-archive@example.com"
     assert newsletter.slug.startswith("2026-08-01-acme-weekly-issue-42-")
     assert "list-manage.com/unsubscribe" not in newsletter.sanitized_html
-    assert 'href="#"' in newsletter.sanitized_html
-    assert "Unsubscribe</a>" in newsletter.sanitized_html  # visible text is preserved
+    assert '<a>Unsubscribe</a>' in newsletter.sanitized_html  # href removed, text preserved
 
     fetched = storage.get_by_slug(conn, newsletter.slug)
     assert fetched is not None

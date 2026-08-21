@@ -69,7 +69,13 @@ def neutralize_unsubscribe_links(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
     for anchor in soup.find_all("a", href=True):
         if _is_unsubscribe_link(anchor):
-            anchor["href"] = "#"
+            # Removing the attribute (not setting href="#") makes the link genuinely
+            # inert -- "#" is still a real navigation target, and clicking it inside the
+            # sandboxed newsletter-body iframe visibly jumps/flashes as if the page were
+            # reloading. An <a> with no href at all isn't a hyperlink; nothing happens on
+            # click. (Newsletter content runs inside a sandbox without allow-scripts, so
+            # an onclick-based approach wouldn't fire anyway -- this is also just simpler.)
+            del anchor["href"]
     return str(soup)
 
 
