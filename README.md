@@ -5,8 +5,12 @@ a single Cloudflare Python Worker: Cloudflare Email Routing triggers ingestion d
 (no separate relay), D1 stores archived newsletters, and the same Worker serves the
 archive pages.
 
-**Live:** https://newsletter-archive.suhail-ghafoor8737.workers.dev (account:
-`Suhail.ghafoor@asu.edu's Account`, id `3ed0332b4053248f9a25eedf3c741b54`)
+**Live:** https://newsletters.evmed.app (Cloudflare Access-gated -- see [USAGE.md](USAGE.md)
+for how colleagues use it). The Worker is also reachable directly at
+https://newsletter-archive.suhail-ghafoor8737.workers.dev, which Access does not protect;
+the app's own identity check (`access.py`) fails closed there instead, except for the
+intentionally-public `/embed/*` routes. Deployed under Cloudflare account
+`3ed0332b4053248f9a25eedf3c741b54` (`Suhail.ghafoor@asu.edu's Account`).
 
 This README is for developing/deploying the code. For how colleagues actually use the
 archive (getting a newsletter in, embedding a widget on a department site, requesting
@@ -17,14 +21,42 @@ admin access), see [USAGE.md](USAGE.md).
 - `src/newsletter_archive/parser.py`, `sanitizer.py`, `slug.py` — pure logic, no I/O:
   MIME parsing (stdlib `email`), unsubscribe/preferences link neutralization
   (BeautifulSoup + `html.parser`), permalink slug generation. Shared by both paths below.
+- `src/newsletter_archive/access.py` — resolves the caller's Cloudflare Access identity
+  server-side, via an internal `/cdn-cgi/access/get-identity` subrequest that forwards
+  the incoming `Cookie` header (not a client-supplied header, so it can't be forged).
+  Fails closed to "no identity" if there's no valid Access session.
 - `src/newsletter_archive/web/app.py` — the FastAPI app, served inside the Worker via
-  its built-in ASGI adapter. Routes: `/` (list + date/sender/subject filters),
-  `/n/{slug}` (permalink page), `/n/{slug}/images/{content_id}`, `POST /ingest`.
+  its built-in ASGI adapter. Routes: `/` (list + date/sender/subject filters), `/n/{slug}`
+  (permalink page), `/n/{slug}/images/{content_id}`, `/n/{slug}/reprocess` (admin action:
+  re-runs the parse → sanitize → link-resolve pipeline against the stored `raw_eml`),
+  `/help` (in-app version of [USAGE.md](USAGE.md), any logged-in user), `POST /ingest`.
+  Authorization has two tiers: super admins (`SUPER_ADMIN_EMAILS` in `wrangler.jsonc`)
+  and per-sender admin grants (`/permissions`, super-admin only to create) that let a
+  user delete/backdate/reprocess newsletters from senders they administer and
+  edit/revoke anyone's embeds for those senders. Every logged-in user, regardless of
+  grants, can view all newsletters and create their own embeds for any sender.
+- `/permissions` lists every grant (read-only for everyone but the super admin, who can
+  add/revoke there) and `/embeds` lets any authenticated user publish a token-scoped,
+  unauthenticated "recent newsletters" query (`/embed/{token}`, `/embed/{token}/n/{slug}`)
+  for embedding as an iframe on a department site; both are linked from the header for
+  every logged-in user. `GET /admin` is kept only as a redirect to `/permissions` for
+  old bookmarks. The `/embed/*` routes deliberately skip the Access identity check and
+  sit behind an Access Bypass policy scoped to `/embed/*` in the dashboard -- the
+  unguessable token, re-validated against the newsletter's sender on every request, is
+  the actual security boundary, not Access.
 - `src/newsletter_archive/storage_d1.py` — async, D1-backed storage used by the deployed
-  routes and the email handler.
+  routes and the email handler. Tables: `newsletters` + `images` (core archive),
+  `admin_grants` (per-sender admin), `embed_queries` (public embeds), `resolved_links`
+  (see below).
 - `src/worker_entry.py` — the Worker entrypoint: `fetch` hands off to the FastAPI app;
   `email` (Cloudflare Email Routing's inbound trigger) reads the raw MIME and calls
-  `ingest_via_d1()`, which runs the same parse → sanitize → slug → store pipeline.
+  `ingest_via_d1()`, which runs the same parse → resolve-links → sanitize → slug → store
+  pipeline. Tracked/redirect links (e.g. Mailchimp click-tracking) are followed to their
+  real destination before sanitizing, since a tracked href reveals nothing about where it
+  actually goes. Workers cap total subrequests per invocation, so resolution is
+  concurrency-throttled and capped per run; results are cached in the `resolved_links`
+  table so a repeat run (or a manual Reprocess) picks up newly-resolved links
+  incrementally instead of re-spending budget on ones already solved.
 - `src/newsletter_archive/storage.py` + `ingest.py` + the CLI (`python -m
   newsletter_archive.ingest`) — a separate, sync/sqlite3 path used only by the pytest
   suite as a fast, wrangler-free way to test the shared parsing/sanitizing logic. Not
@@ -70,7 +102,9 @@ Set `NEWSLETTER_ARCHIVE_INGEST_TOKEN` (checked against an `X-Ingest-Token` heade
 ## Deploying
 
 ```bash
-uv run pywrangler d1 execute DB --remote --file migrations/0001_init.sql   # first time / schema changes only
+# First time, or after pulling schema changes: run any migrations/*.sql not yet applied
+# to the remote DB, in order (no migration-tracking table yet -- check by hand).
+uv run pywrangler d1 execute DB --remote --file migrations/0001_init.sql
 uv run pywrangler deploy
 ```
 
@@ -80,10 +114,14 @@ route an inbound address to this Worker. See `wrangler email routing --help`.
 ## What gets changed vs. preserved
 
 Only unsubscribe / manage-preferences / email-preferences links (matched by anchor text
-and known href patterns, see `sanitizer.py`) get their `href` replaced with `#`. Every
-other link and all other content is left exactly as it was in the original email. Inline
-(`cid:`) images are extracted and re-served from the archive so permalinks don't show
-broken images; externally-hosted images are left untouched.
+and known href patterns, see `sanitizer.py`) get their `href` attribute removed entirely
+-- not set to `#`, which is still a real (if inert-looking) navigation target. Every
+other link and all other content is left exactly as it was in the original email, except
+that tracked/redirect links (e.g. click-tracking wrappers) are rewritten to the real
+destination URL they resolve to (see `worker_entry.py`) -- the visible link text is
+unchanged, only where it actually goes. Inline (`cid:`) images are extracted and
+re-served from the archive so permalinks don't show broken images; externally-hosted
+images are left untouched.
 
 ## Notes on the Python Workers port
 

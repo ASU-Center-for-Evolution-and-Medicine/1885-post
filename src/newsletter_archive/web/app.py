@@ -247,8 +247,11 @@ _TEMPLATES = {
         </span>
       </a>
       <div class="header-right">
-        {% if identity_display %}<a class="admin-link" href="/help">Help</a>{% endif %}
-        {% if is_super_admin %}<a class="admin-link" href="/admin">Admin</a>{% endif %}
+        {% if identity_display %}
+          <a class="admin-link" href="/help">Help</a>
+          <a class="admin-link" href="/embeds">Embeds</a>
+          <a class="admin-link" href="/permissions">Permissions</a>
+        {% endif %}
         {% if identity_display %}
           <div class="identity">
             <div class="identity-name">{{ identity_display }}</div>
@@ -460,14 +463,14 @@ _TEMPLATES = {
   clicking a newsletter opens the full thing. Any logged-in archive user can create one,
   no admin access needed:</p>
   <ol class="meta">
-    <li>Go to <a href="/admin">/admin</a>.</li>
-    <li>Under <strong>Embeds</strong>, fill in a name, a sender email to filter to
-    (leave blank to show newsletters from <em>all</em> senders), how many to show (0
-    shows all of them), and sort order, then <strong>Create embed</strong>.</li>
+    <li>Go to <a href="/embeds">Embeds</a> (linked at the top of every page).</li>
+    <li>Fill in a name, a sender email to filter to (leave blank to show newsletters
+    from <em>all</em> senders), how many to show (0 shows all of them), and sort order,
+    then <strong>Create embed</strong>.</li>
     <li>Click <strong>Copy iframe code</strong> next to it and paste that directly into
     your website's HTML.</li>
   </ol>
-  <p class="meta">You can revisit <a href="/admin">/admin</a> any time to
+  <p class="meta">You can revisit <a href="/embeds">Embeds</a> any time to
   <strong>Edit</strong> an embed you created (updates what it shows without breaking the
   link you already pasted somewhere) or <strong>Revoke</strong> it (immediately stops it
   from working anywhere it's embedded). Editing or revoking an embed someone else
@@ -476,61 +479,69 @@ _TEMPLATES = {
   <h2>Don't have admin access yet?</h2>
   <p class="meta">Admin access is per sending address -- it lets you delete newsletters
   from that sender in the archive, backdate them (useful for backfilling old issues),
-  and edit/revoke embeds scoped to that sender even if you didn't create them. It's not
-  needed just to create your own embeds.</p>
+  and edit/revoke embeds scoped to that sender even if you did not create them. It is
+  not needed just to create your own embeds. See <a href="/permissions">Permissions</a>
+  for who currently administers which sender.</p>
   <p class="meta">Contact Suhail
   (<a href="mailto:suhail.ghafoor@asu.edu">suhail.ghafoor@asu.edu</a>) to be set up as an
   admin for your sending address.</p>
 {% endblock %}
 """,
-    "admin.html": """{% extends "base.html" %}
-{% block title %}Admin · Newsletter Archive{% endblock %}
+    "permissions.html": """{% extends "base.html" %}
+{% block title %}Permissions · Newsletter Archive{% endblock %}
 {% block content %}
-  <h1>Admin</h1>
+  <h1>Permissions</h1>
+
+  <p class="meta">Admin rights are granted per sender (from) address: an admin can
+  delete newsletters *from* that sender, backdate them, and edit/revoke embeds scoped to
+  it even if someone else created them. Every authenticated user can already view every
+  newsletter and create their own embeds for any sender regardless of grants -- this page
+  just lists, for full transparency, who additionally administers which sender.</p>
 
   {% if is_super_admin %}
-    <h2>Grants</h2>
-    <p class="meta">Grant a user admin rights over a sender: they'll be able to delete
-    newsletters *from* that sender address, backdate them, and edit/revoke embeds scoped
-    to it even if someone else created them. Every authenticated user can already view
-    everything, and can already create their own embeds for any sender, regardless of
-    grants.</p>
-
-    <form class="admin-form" method="post" action="/admin/grants">
+    <form class="admin-form" method="post" action="/permissions/grants">
       <input type="email" name="user_email" placeholder="user@example.com" required>
       <input type="text" name="from_email" placeholder="news@sender.com" required>
       <button type="submit">Grant</button>
     </form>
+  {% endif %}
 
-    {% if grants %}
-      <table class="admin-table">
-        <thead><tr><th>User</th><th>Sender (from)</th><th></th></tr></thead>
-        <tbody>
-          {% for g in grants %}
-            <tr>
-              <td>{{ g.user_email }}</td>
-              <td>{{ g.from_email }}</td>
+  {% if grants %}
+    <table class="admin-table">
+      <thead><tr><th>User</th><th>Sender (from)</th>{% if is_super_admin %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+        {% for g in grants %}
+          <tr>
+            <td>{{ g.user_email }}</td>
+            <td>{{ g.from_email }}</td>
+            {% if is_super_admin %}
               <td>
-                <form class="delete-form" method="post" action="/admin/grants/{{ g.id }}/delete" onsubmit="return confirm('Revoke this grant?');">
+                <form class="delete-form" method="post" action="/permissions/grants/{{ g.id }}/delete" onsubmit="return confirm('Revoke this grant?');">
                   <button type="submit" class="delete-btn">Revoke</button>
                 </form>
               </td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      <p class="empty">No admin grants yet.</p>
-    {% endif %}
+            {% endif %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="empty">No admin grants yet.</p>
   {% endif %}
+{% endblock %}
+""",
+    "embeds.html": """{% extends "base.html" %}
+{% block title %}Embeds · Newsletter Archive{% endblock %}
+{% block content %}
+  <h1>Embeds</h1>
 
-  <h2>Embeds</h2>
   <p class="meta">Publish a public, unauthenticated list of recent newsletters (optionally
   filtered by sender) for embedding as an iframe on a department website -- no login
-  required to view it or open a newsletter from it. Revoke to break every iframe using it
-  immediately; edit to change what an existing embed shows without breaking its URL.</p>
+  required to view it or open a newsletter from it. Any logged-in user can create one.
+  Revoke to break every iframe using it immediately; edit to change what an existing
+  embed shows without breaking its URL.</p>
 
-  <form class="admin-form" method="post" action="{{ ('/admin/embeds/' ~ edit_embed.token ~ '/edit') if edit_embed else '/admin/embeds' }}">
+  <form class="admin-form" method="post" action="{{ ('/embeds/' ~ edit_embed.token ~ '/edit') if edit_embed else '/embeds' }}">
     <input type="text" name="name" placeholder="Name, e.g. CEM homepage widget" value="{{ edit_embed.name if edit_embed else '' }}" required>
     <input type="text" name="sender_email" placeholder="Sender email (blank = all senders)" value="{{ edit_embed.sender_email or '' if edit_embed else '' }}">
     <input type="number" name="result_limit" value="{{ edit_embed.result_limit if edit_embed else 5 }}" min="0" max="50" title="0 shows all newsletters">
@@ -539,7 +550,7 @@ _TEMPLATES = {
       <option value="oldest" {{ "selected" if edit_embed and edit_embed.sort == "oldest" }}>Oldest first</option>
     </select>
     <button type="submit">{{ "Save changes" if edit_embed else "Create embed" }}</button>
-    {% if edit_embed %}<a href="/admin" class="cancel-link">Cancel</a>{% endif %}
+    {% if edit_embed %}<a href="/embeds" class="cancel-link">Cancel</a>{% endif %}
   </form>
   <p class="meta" style="margin-top: -0.75rem;">Limit: 0 shows every matching newsletter.</p>
 
@@ -557,8 +568,8 @@ _TEMPLATES = {
               <button type="button" class="secondary-btn copy-btn" data-url="{{ base_url }}/embed/{{ e.token }}">Copy iframe code</button>
             </td>
             <td>
-              <a href="/admin?edit={{ e.token }}" class="edit-link">Edit</a>
-              <form class="delete-form" method="post" action="/admin/embeds/{{ e.token }}/delete" onsubmit="return confirm('Revoke this embed? Any iframe using it will break immediately.');">
+              <a href="/embeds?edit={{ e.token }}" class="edit-link">Edit</a>
+              <form class="delete-form" method="post" action="/embeds/{{ e.token }}/delete" onsubmit="return confirm('Revoke this embed? Any iframe using it will break immediately.');">
                 <button type="submit" class="delete-btn">Revoke</button>
               </form>
             </td>
@@ -861,12 +872,64 @@ async def help_page(request: Request):
 
 
 @app.get("/admin")
-async def admin_dashboard(request: Request, edit: str | None = None):
+async def admin_redirect():
+    """Old combined admin console -- now split into /embeds (any user) and /permissions
+    (read-only for everyone, manageable by the super admin). Kept as a redirect for
+    anyone with the old URL bookmarked."""
+    return RedirectResponse(url="/permissions", status_code=308)
+
+
+@app.get("/permissions")
+async def permissions_dashboard(request: Request):
+    """Read-only for everyone except the super admin, who can add/revoke grants here.
+    Visible to every authenticated user -- this is an internal tool, so who administers
+    which sender isn't sensitive, and full transparency here beats hiding it."""
+    email, identity_display = await _current_user(request)
+    if not email:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    is_super = _is_super_admin(request, email)
+    grants = await storage.list_admin_grants(_db(request))
+
+    return _render(
+        "permissions.html",
+        grants=grants,
+        identity_display=identity_display,
+        identity_email=email,
+        is_super_admin=is_super,
+    )
+
+
+@app.post("/permissions/grants")
+async def add_admin_grant(request: Request):
+    email, _identity_display = await _current_user(request)
+    if not email or not _is_super_admin(request, email):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    form = await _parse_form(request)
+    grant_user_email = (form.get("user_email") or "").strip().lower()
+    from_email = (form.get("from_email") or "").strip().lower()
+    if grant_user_email and from_email:
+        await storage.add_admin_grant(_db(request), grant_user_email, from_email)
+    return RedirectResponse(url="/permissions", status_code=303)
+
+
+@app.post("/permissions/grants/{grant_id}/delete")
+async def delete_admin_grant(request: Request, grant_id: int):
+    email, _identity_display = await _current_user(request)
+    if not email or not _is_super_admin(request, email):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    await storage.delete_admin_grant(_db(request), grant_id)
+    return RedirectResponse(url="/permissions", status_code=303)
+
+
+@app.get("/embeds")
+async def embeds_dashboard(request: Request, edit: str | None = None):
     """Any authenticated user can reach this page to create/manage their own embeds --
-    embed creation isn't an admin-gated action (see create_embed). Grants stay super-admin
-    only (granting admin rights out to others is a higher-trust action), and the embeds
-    table only lists ones this user is allowed to manage: everything for a super admin,
-    or (their own + their administered senders') for everyone else.
+    embed creation isn't an admin-gated action (see create_embed). The table only lists
+    embeds this user is allowed to manage: everything for a super admin, or (their own +
+    their administered senders') for everyone else.
 
     ?edit={token} pre-fills the embed form for editing that embed in place (same token,
     same URL, so any iframe already using it keeps working) instead of creating a new one.
@@ -878,7 +941,6 @@ async def admin_dashboard(request: Request, edit: str | None = None):
     is_super = _is_super_admin(request, email)
     admin_senders = await storage.list_admin_senders(_db(request), email)
 
-    grants = await storage.list_admin_grants(_db(request)) if is_super else []
     all_embeds = await storage.list_embed_queries(_db(request))
     embeds = (
         all_embeds
@@ -893,8 +955,7 @@ async def admin_dashboard(request: Request, edit: str | None = None):
             raise HTTPException(status_code=403, detail="Not allowed to edit this embed")
 
     return _render(
-        "admin.html",
-        grants=grants,
+        "embeds.html",
         embeds=embeds,
         edit_embed=edit_embed,
         base_url=str(request.base_url).rstrip("/"),
@@ -902,30 +963,6 @@ async def admin_dashboard(request: Request, edit: str | None = None):
         identity_email=email,
         is_super_admin=is_super,
     )
-
-
-@app.post("/admin/grants")
-async def add_admin_grant(request: Request):
-    email, _identity_display = await _current_user(request)
-    if not email or not _is_super_admin(request, email):
-        raise HTTPException(status_code=404, detail="Not found")
-
-    form = await _parse_form(request)
-    grant_user_email = (form.get("user_email") or "").strip().lower()
-    from_email = (form.get("from_email") or "").strip().lower()
-    if grant_user_email and from_email:
-        await storage.add_admin_grant(_db(request), grant_user_email, from_email)
-    return RedirectResponse(url="/admin", status_code=303)
-
-
-@app.post("/admin/grants/{grant_id}/delete")
-async def delete_admin_grant(request: Request, grant_id: int):
-    email, _identity_display = await _current_user(request)
-    if not email or not _is_super_admin(request, email):
-        raise HTTPException(status_code=404, detail="Not found")
-
-    await storage.delete_admin_grant(_db(request), grant_id)
-    return RedirectResponse(url="/admin", status_code=303)
 
 
 async def _can_manage_embed(request: Request, email: str, embed: storage.EmbedQuery) -> bool:
@@ -960,7 +997,7 @@ def _parse_embed_form(form: dict[str, str]) -> tuple[str, str | None, int, str]:
     return name, sender_email, result_limit, sort
 
 
-@app.post("/admin/embeds")
+@app.post("/embeds")
 async def create_embed(request: Request):
     """Any authenticated user can create an embed for any sender (or all senders) --
     an embed only ever exposes newsletters that user could already view on the site, so
@@ -985,10 +1022,10 @@ async def create_embed(request: Request):
         sort=sort,
         created_by=email,
     )
-    return RedirectResponse(url="/admin", status_code=303)
+    return RedirectResponse(url="/embeds", status_code=303)
 
 
-@app.post("/admin/embeds/{token}/edit")
+@app.post("/embeds/{token}/edit")
 async def edit_embed(request: Request, token: str):
     email, _identity_display = await _current_user(request)
     if not email:
@@ -1010,10 +1047,10 @@ async def edit_embed(request: Request, token: str):
     await storage.update_embed_query(
         _db(request), token, name=name, sender_email=sender_email, result_limit=result_limit, sort=sort
     )
-    return RedirectResponse(url="/admin", status_code=303)
+    return RedirectResponse(url="/embeds", status_code=303)
 
 
-@app.post("/admin/embeds/{token}/delete")
+@app.post("/embeds/{token}/delete")
 async def delete_embed(request: Request, token: str):
     email, _identity_display = await _current_user(request)
     if not email:
@@ -1026,7 +1063,7 @@ async def delete_embed(request: Request, token: str):
     if not await _can_manage_embed(request, email, embed):
         raise HTTPException(status_code=403, detail="Not allowed to revoke this embed")
     await storage.delete_embed_query(_db(request), token)
-    return RedirectResponse(url="/admin", status_code=303)
+    return RedirectResponse(url="/embeds", status_code=303)
 
 
 @app.get("/embed/{token}")
