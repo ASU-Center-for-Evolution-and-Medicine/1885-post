@@ -15,6 +15,7 @@ import base64
 import os
 import secrets
 from datetime import datetime, timezone
+from email.utils import parseaddr
 from urllib.parse import parse_qs
 
 import jinja2
@@ -252,13 +253,13 @@ _TEMPLATES = {
 <body>
   <header class="site-header">
     <div class="site-header-inner {{ self.main_class() }}">
-      <a class="site-brand" href="{{ embed_back_url or '/' }}">
+      {% if embed_back_url %}<div class="site-brand">{% else %}<a class="site-brand" href="/">{% endif %}
         <img src="/static/app-mark.png" alt="" aria-hidden="true" class="site-mark" width="82" height="50">
         <span class="site-titles">
           <span class="site-title">The 1885 Post</span>
           <span class="site-subtitle">An Arizona State University newsletter archive</span>
         </span>
-      </a>
+      {% if embed_back_url %}</div>{% else %}</a>{% endif %}
       <div class="header-right">
         {% if identity_display %}
           <a class="admin-link" href="/help">Help</a>
@@ -1116,8 +1117,11 @@ async def embed_permalink(request: Request, token: str, slug: str):
     if embed.sender_email and newsletter.from_email != embed.sender_email:
         raise HTTPException(status_code=404, detail="Newsletter not found")
 
+    # Prefer the sender's display name (e.g. "Veterans at ASU") over their bare address --
+    # this newsletter's from_address is guaranteed to match embed.sender_email above.
+    sender_name = parseaddr(newsletter.from_address)[0] or embed.sender_email
     embed_back_label = (
-        f"All newsletters from {embed.sender_email}" if embed.sender_email else "All newsletters"
+        f"Show previous newsletters from {sender_name}" if embed.sender_email else "Show previous newsletters"
     )
     return _render(
         "permalink.html",
