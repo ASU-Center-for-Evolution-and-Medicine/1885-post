@@ -1,6 +1,7 @@
-# Newsletter Archive — Colleague Guide
+# The 1885 Post — Colleague Guide
 
-The archive lives at **https://newsletters.evmed.app**.
+The 1885 Post lives at **https://newsletters.evmed.app**. It is an Arizona State
+University newsletter archive.
 
 ## Get your newsletter into the archive
 

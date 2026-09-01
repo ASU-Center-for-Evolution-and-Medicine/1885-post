@@ -23,9 +23,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .. import access
 from .. import storage_d1 as storage
-from .assets import FAVICON_ICO_BASE64, LOGO_PNG_BASE64
+from .assets import APP_MARK_PNG_BASE64, FAVICON_ICO_BASE64, LOGO_PNG_BASE64
 
-app = FastAPI(title="Newsletter Archive")
+app = FastAPI(title="The 1885 Post")
 
 # Set this before exposing /ingest to anything outside your own testing -- checked
 # against the X-Ingest-Token header on POST /ingest.
@@ -65,10 +65,15 @@ body {
   display: flex; align-items: center; justify-content: space-between; gap: 1rem;
 }
 .site-header-inner.wide { max-width: 1150px; }
-.site-brand { display: flex; align-items: center; text-decoration: none; }
-.site-titles { display: flex; flex-direction: column; line-height: 1.25; }
+.site-brand {
+  display: flex; align-items: center; gap: 0.75rem; min-width: 0; text-decoration: none;
+}
+.site-mark {
+  display: block; width: 82px; height: 50px; object-fit: contain; flex: 0 0 auto;
+}
+.site-titles { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
 .site-title { color: var(--asu-maroon); font-weight: 700; font-size: 1.1rem; }
-.site-subtitle { color: var(--text-muted); font-size: 0.75rem; }
+.site-subtitle { color: var(--text-muted); font-size: 0.75rem; max-width: 18rem; }
 .header-right { display: flex; align-items: center; gap: 1rem; }
 .admin-link {
   color: var(--asu-maroon); font-size: 0.85rem; font-weight: 600; text-decoration: none;
@@ -131,8 +136,15 @@ main > h1 {
 .sidebar-link.active .sender-email { color: rgba(255, 255, 255, 0.75); }
 
 @media (max-width: 720px) {
+  .site-header-inner { padding: 0.75rem 1rem; align-items: flex-start; flex-wrap: wrap; }
+  .site-brand { width: 100%; }
+  .site-mark { width: 72px; height: 44px; }
+  .site-subtitle { max-width: none; }
+  .header-right { width: 100%; flex-wrap: wrap; gap: 0.5rem; }
+  .identity { flex: 1 0 100%; margin-left: 0; text-align: left; overflow-wrap: anywhere; }
   .layout { flex-direction: column; }
   .sidebar { width: 100%; }
+  .content { width: 100%; }
 }
 
 .newsletter-list { list-style: none; padding: 0; margin: 0; }
@@ -233,17 +245,18 @@ _TEMPLATES = {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Newsletter Archive{% endblock %}</title>
+  <title>{% block title %}The 1885 Post{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" href="/favicon.ico">
 </head>
 <body>
   <header class="site-header">
     <div class="site-header-inner {{ self.main_class() }}">
-      <a class="site-brand" href="/">
+      <a class="site-brand" href="{{ embed_back_url or '/' }}">
+        <img src="/static/app-mark.png" alt="" aria-hidden="true" class="site-mark" width="82" height="50">
         <span class="site-titles">
-          <span class="site-title">Newsletter Archive</span>
-          <span class="site-subtitle">Center for Evolution and Medicine</span>
+          <span class="site-title">The 1885 Post</span>
+          <span class="site-subtitle">An Arizona State University newsletter archive</span>
         </span>
       </a>
       <div class="header-right">
@@ -251,6 +264,8 @@ _TEMPLATES = {
           <a class="admin-link" href="/help">Help</a>
           <a class="admin-link" href="/embeds">Embeds</a>
           <a class="admin-link" href="/permissions">Permissions</a>
+        {% elif embed_back_url %}
+          <a class="admin-link" href="{{ embed_back_url }}">{{ embed_back_label }}</a>
         {% endif %}
         {% if identity_display %}
           <div class="identity">
@@ -275,7 +290,7 @@ _TEMPLATES = {
 </html>
 """,
     "list.html": """{% extends "base.html" %}
-{% block title %}Newsletter Archive{% endblock %}
+{% block title %}The 1885 Post{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
   <div class="layout">
@@ -332,7 +347,7 @@ _TEMPLATES = {
 {% endblock %}
 """,
     "permalink.html": """{% extends "base.html" %}
-{% block title %}{{ newsletter.subject }} · Newsletter Archive{% endblock %}
+{% block title %}{{ newsletter.subject }} · The 1885 Post{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
   <div class="layout">
@@ -445,7 +460,7 @@ _TEMPLATES = {
 {% endblock %}
 """,
     "help.html": """{% extends "base.html" %}
-{% block title %}Help · Newsletter Archive{% endblock %}
+{% block title %}Help · The 1885 Post{% endblock %}
 {% block content %}
   <h1>Help</h1>
 
@@ -488,7 +503,7 @@ _TEMPLATES = {
 {% endblock %}
 """,
     "permissions.html": """{% extends "base.html" %}
-{% block title %}Permissions · Newsletter Archive{% endblock %}
+{% block title %}Permissions · The 1885 Post{% endblock %}
 {% block content %}
   <h1>Permissions</h1>
 
@@ -531,7 +546,7 @@ _TEMPLATES = {
 {% endblock %}
 """,
     "embeds.html": """{% extends "base.html" %}
-{% block title %}Embeds · Newsletter Archive{% endblock %}
+{% block title %}Embeds · The 1885 Post{% endblock %}
 {% block content %}
   <h1>Embeds</h1>
 
@@ -601,7 +616,7 @@ _TEMPLATES = {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <title>{{ embed.name }}</title>
+  <title>{{ embed.name }} · The 1885 Post</title>
   <link rel="stylesheet" href="/static/style.css">
   <style>
     body { margin: 0; padding: 0.75rem 1rem; }
@@ -697,6 +712,11 @@ async def _parse_form(request: Request) -> dict[str, str]:
 @app.get("/static/style.css")
 async def style_css():
     return Response(content=_CSS, media_type="text/css")
+
+
+@app.get("/static/app-mark.png")
+async def app_mark_png():
+    return Response(content=base64.b64decode(APP_MARK_PNG_BASE64), media_type="image/png")
 
 
 @app.get("/static/logo.png")
@@ -1096,6 +1116,9 @@ async def embed_permalink(request: Request, token: str, slug: str):
     if embed.sender_email and newsletter.from_email != embed.sender_email:
         raise HTTPException(status_code=404, detail="Newsletter not found")
 
+    embed_back_label = (
+        f"All newsletters from {embed.sender_email}" if embed.sender_email else "All newsletters"
+    )
     return _render(
         "permalink.html",
         newsletter=newsletter,
@@ -1103,6 +1126,8 @@ async def embed_permalink(request: Request, token: str, slug: str):
         identity_email=None,
         is_admin=False,
         is_super_admin=False,
+        embed_back_url=f"/embed/{token}",
+        embed_back_label=embed_back_label,
     )
 
 

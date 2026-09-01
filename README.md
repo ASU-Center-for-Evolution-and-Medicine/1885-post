@@ -1,9 +1,9 @@
-# Newsletter Archive
+# The 1885 Post
 
-Turns an incoming newsletter email into a permanent, linkable archive page. Deployed as
-a single Cloudflare Python Worker: Cloudflare Email Routing triggers ingestion directly
-(no separate relay), D1 stores archived newsletters, and the same Worker serves the
-archive pages.
+The 1885 Post turns an incoming newsletter email into a permanent, linkable archive page.
+It is deployed as a single Cloudflare Python Worker: Cloudflare Email Routing triggers
+ingestion directly (no separate relay), D1 stores archived newsletters, and the same
+Worker serves the archive pages.
 
 **Live:** https://newsletters.evmed.app (Cloudflare Access-gated -- see [USAGE.md](USAGE.md)
 for how colleagues use it). The Worker is also reachable directly at
