@@ -81,11 +81,13 @@ body {
 .site-title { color: var(--asu-maroon); font-weight: 700; font-size: 1.1rem; }
 .site-subtitle { color: var(--text-muted); font-size: 0.75rem; max-width: 18rem; }
 .header-right { display: flex; align-items: center; gap: 1rem; }
-.admin-link {
-  color: var(--asu-maroon); font-size: 0.85rem; font-weight: 600; text-decoration: none;
-  border: 1px solid var(--asu-maroon); border-radius: 8px; padding: 0.3rem 0.7rem;
+.site-nav { display: flex; align-items: center; gap: 1.5rem; }
+.nav-link {
+  color: var(--text-primary); font-size: 0.9rem; font-weight: 600; text-decoration: none;
+  padding: 0.3rem 0; border-bottom: 2px solid transparent;
+  transition: color 0.15s ease, border-color 0.15s ease;
 }
-.admin-link:hover { background: var(--asu-gold); border-color: var(--asu-gold); }
+.nav-link:hover { color: var(--asu-maroon); border-bottom-color: var(--asu-maroon); }
 .identity { text-align: right; font-size: 0.85rem; line-height: 1.35; }
 .identity-name { color: var(--text-primary); font-weight: 600; }
 .identity-email { color: var(--text-muted); }
@@ -173,14 +175,39 @@ main > h1 {
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 .sender-card:hover { transform: translateY(-2px); box-shadow: 0 15px 30px -20px rgba(140, 29, 64, 0.5); }
+.sender-card-thumb-wrap { position: relative; }
 .sender-card-thumb { width: 100%; height: 140px; object-fit: cover; display: block; }
+img.sender-card-thumb { filter: brightness(0.65); }
 .sender-card-thumb--placeholder {
   display: flex; align-items: center; justify-content: center;
   background: var(--asu-sand); color: var(--asu-maroon); font-weight: 700; font-size: 2.5rem;
 }
+.sender-card-badge {
+  position: absolute; top: 0.5rem; right: 0.5rem;
+  background: var(--asu-maroon); color: #fff;
+  font-size: 0.75rem; font-weight: 700; line-height: 1;
+  min-width: 1.6rem; height: 1.6rem; padding: 0 0.4rem;
+  border-radius: 999px; display: flex; align-items: center; justify-content: center;
+  border: 2px solid #fff; box-shadow: 0 3px 10px rgba(0,0,0,0.5);
+}
 .sender-card-body { padding: 0.9rem 1rem; }
-.sender-card-name { font-weight: 700; color: var(--asu-maroon); margin-bottom: 0.25rem; }
+.sender-card-name {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  font-weight: 700; color: var(--asu-maroon); margin-bottom: 0.25rem;
+}
+.sender-card-arrow {
+  opacity: 0; transform: translateX(-4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.sender-card:hover .sender-card-arrow { opacity: 1; transform: translateX(0); }
 .sender-card-meta { font-size: 0.82rem; color: var(--text-muted); }
+
+.view-all-card {
+  flex-direction: row; align-items: center; justify-content: center; gap: 0.6rem;
+  min-height: 210px; background: var(--asu-maroon); border: none; color: #fff;
+  font-weight: 800; font-size: 1.3rem; letter-spacing: 0.02em;
+}
+.view-all-card:hover { background: var(--asu-black); }
 
 .meta { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.2rem; }
 
@@ -241,10 +268,7 @@ main > h1 {
   text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); font-size: 0.9rem;
 }
 .admin-table th { color: var(--text-muted); font-weight: 600; }
-.embed-snippet {
-  display: block; font-size: 0.72rem; background: var(--asu-sand); color: var(--text-primary);
-  padding: 0.3rem 0.5rem; border-radius: 6px; margin-bottom: 0.35rem; word-break: break-all;
-}
+.embed-code-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .copy-btn { font-size: 0.78rem; padding: 0.3rem 0.6rem; }
 .cancel-link { align-self: center; color: var(--text-muted); font-size: 0.85rem; text-decoration: underline; }
 .edit-link {
@@ -254,24 +278,45 @@ main > h1 {
 .edit-link:hover { text-decoration: underline; }
 
 .permalink-meta { margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
+.permalink-title-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .permalink-meta h1 {
   margin: 0 0 0.5rem; font-size: 1.4rem;
   color: var(--asu-black); background: var(--asu-gold); padding: 0.2rem 0.5rem; display: inline-block;
 }
 .permalink-meta .meta { font-size: 0.9rem; }
+.print-btn { display: inline-flex; align-items: center; gap: 0.4rem; flex: 0 0 auto; white-space: nowrap; }
+.print-btn svg { display: block; }
 
 #body-frame { width: 100%; border: 0; display: block; min-height: 400px; }
 .empty { color: var(--text-muted); padding: 2rem 0; }
 
-.app-footer {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 0.3rem; font-size: 0.85rem; color: rgba(74, 74, 88, 0.8);
-  text-align: center; padding: 1.5rem 1rem 2rem;
+/* Print / "Save as PDF": clicking .print-btn calls window.print(), and this is what
+   makes that show only the newsletter body itself -- everything else on the page
+   (site chrome, admin sidebar, the meta line and button, embed footer link) is hidden
+   for the print media type specifically, leaving only the actual archived content.
+   Applies identically on the authenticated permalink page and the public embed
+   permalink page, since both render this same template. */
+@media print {
+  .site-header, .app-footer, .permalink-meta, .admin-sidebar { display: none !important; }
+  body { background: #fff; }
+  main { box-shadow: none; border: none; border-radius: 0; padding: 0; margin: 0; max-width: 100%; }
+  .layout { display: block; }
+  .content { width: 100%; }
+  #body-frame { min-height: 0; }
 }
+
+.app-footer {
+  display: flex; align-items: center; justify-content: center;
+  gap: 0.75rem; font-size: 0.65rem; color: rgba(74, 74, 88, 0.8);
+  text-align: left; padding: 0.75rem 1rem;
+}
+.app-footer__text { display: flex; flex-direction: column; gap: 0.1rem; }
 .app-footer p { margin: 0; padding: 0; }
 .app-footer a { color: rgba(140, 29, 64, 0.85); font-weight: 600; text-decoration: none; }
 .app-footer a:hover { text-decoration: underline; }
-.app-footer__logo { display: block; height: 60px; width: auto; border-radius: 6px; margin-bottom: 0.3rem; }
+.app-footer__logo { display: block; height: 60px; width: auto; border-radius: 4px; flex: 0 0 auto; }
+
+.collection-stats { color: var(--text-muted); font-size: 0.9rem; margin: -0.25rem 0 1rem; }
 """
 
 _TEMPLATES = {
@@ -283,6 +328,7 @@ _TEMPLATES = {
   <title>{% block title %}The 1885 Post{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" href="/favicon.ico">
+  {% block head %}{% endblock %}
 </head>
 <body>
   <header class="site-header">
@@ -296,12 +342,13 @@ _TEMPLATES = {
       {% if embed_back_url %}</div>{% else %}</a>{% endif %}
       <div class="header-right">
         {% if identity_display %}
-          <a class="admin-link" href="/archive">Archive</a>
-          <a class="admin-link" href="/help">Help</a>
-          <a class="admin-link" href="/embeds">Embeds</a>
-          <a class="admin-link" href="/permissions">Permissions</a>
+          <nav class="site-nav">
+            <a class="nav-link" href="/archive">Archive</a>
+            <a class="nav-link" href="/embeds">Embeds</a>
+            <a class="nav-link" href="/permissions">Permissions</a>
+          </nav>
         {% elif embed_back_url %}
-          <a class="admin-link" href="{{ embed_back_url }}">{{ embed_back_label }}</a>
+          <a class="nav-link" href="{{ embed_back_url }}">{{ embed_back_label }}</a>
         {% endif %}
         {% if identity_display %}
           <div class="identity">
@@ -319,8 +366,10 @@ _TEMPLATES = {
   </main>
   <footer class="app-footer">
     <a href="https://evmed.asu.edu"><img src="/static/logo.png" alt="Center for Evolution and Medicine logo" class="app-footer__logo" width="220" height="55"></a>
-    <p>Made by the <a href="https://evmed.asu.edu/">Center for Evolution and Medicine</a> at <a href="https://asu.edu">Arizona State University</a>.</p>
-    <p>For any issues contact <a href="mailto:suhail.ghafoor@asu.edu">suhail.ghafoor@asu.edu</a>.</p>
+    <div class="app-footer__text">
+      <p>Made by the <a href="https://evmed.asu.edu/">Center for Evolution and Medicine</a> at <a href="https://asu.edu">Arizona State University</a>.</p>
+      <p><a href="/help">Help</a></p>
+    </div>
   </footer>
 </body>
 </html>
@@ -330,63 +379,38 @@ _TEMPLATES = {
 {% block main_class %}wide{% endblock %}
 {% block content %}
   <h1>Newsletters by sender</h1>
+  {% if total_newsletters %}
+    <p class="collection-stats">{{ total_newsletters }} newsletter{{ "s" if total_newsletters != 1 }} archived from {{ total_senders }} sender{{ "s" if total_senders != 1 }}</p>
+  {% endif %}
   {% if senders %}
     <div class="sender-grid">
       {% for s in senders %}
-        <a class="sender-card" href="/sender?from_email={{ s.from_email }}">
-          {% if s.latest_thumbnail_key %}
-            <img class="sender-card-thumb" src="/static/newsletters/{{ s.latest_slug }}/{{ s.latest_thumbnail_key }}" alt="">
-          {% else %}
-            <div class="sender-card-thumb sender-card-thumb--placeholder">{{ s.name[0]|upper }}</div>
-          {% endif %}
+        <a class="sender-card" href="/archive?sender={{ s.from_email }}">
+          <div class="sender-card-thumb-wrap">
+            {% if s.latest_thumbnail_key %}
+              <img class="sender-card-thumb" src="/static/newsletters/{{ s.latest_slug }}/{{ s.latest_thumbnail_key }}" alt="">
+            {% else %}
+              <div class="sender-card-thumb sender-card-thumb--placeholder">{{ s.name[0]|upper }}</div>
+            {% endif %}
+            <span class="sender-card-badge">{{ s.count }}</span>
+          </div>
           <div class="sender-card-body">
-            <div class="sender-card-name">{{ s.name }}</div>
-            <div class="sender-card-meta">{{ s.count }} newsletter{{ "s" if s.count != 1 }} &middot; latest {{ s.latest_received_at|humandate }}</div>
+            <div class="sender-card-name">{{ s.name }}<span class="sender-card-arrow">&rarr;</span></div>
+            <div class="sender-card-meta">latest {{ s.latest_received_at|humandate }}</div>
           </div>
         </a>
       {% endfor %}
+      <a class="sender-card view-all-card" href="/archive">
+        <span class="view-all-text">View all</span>
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <line x1="3" y1="10" x2="15" y2="10" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+          <polyline points="9 4 15 10 9 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"></polyline>
+        </svg>
+      </a>
     </div>
   {% else %}
     <p class="empty">No newsletters archived yet.</p>
   {% endif %}
-{% endblock %}
-""",
-    "sender_feed.html": """{% extends "base.html" %}
-{% block title %}{{ sender_name }} · The 1885 Post{% endblock %}
-{% block main_class %}wide{% endblock %}
-{% block content %}
-  <h1>{{ sender_name }}</h1>
-  <p class="meta">{{ count }} newsletter{{ "s" if count != 1 }} archived &middot;
-  <a href="/archive?sender={{ sender_email }}">View with filters and sorting</a></p>
-
-  {% if newsletters %}
-    <ul class="newsletter-list">
-      {% for n in newsletters %}
-        <li>
-          {% if n.thumbnail_key %}
-            <img class="thumb" src="/static/newsletters/{{ n.slug }}/{{ n.thumbnail_key }}" alt="">
-          {% else %}
-            <div class="thumb-placeholder">{{ (n.from_address or "?")[0]|upper }}</div>
-          {% endif %}
-          <div class="li-text">
-            <a class="subject" href="/n/{{ n.slug }}">{{ n.subject }}</a>
-            <div class="meta">{{ (n.received_at or n.created_at)|humandate }}</div>
-          </div>
-        </li>
-      {% endfor %}
-    </ul>
-  {% else %}
-    <p class="empty">No newsletters from this sender.</p>
-  {% endif %}
-
-  <div class="pagination">
-    {% if page > 1 %}
-      <a href="?from_email={{ sender_email }}&page={{ page - 1 }}">&larr; Newer</a>
-    {% else %}<span></span>{% endif %}
-    {% if has_next %}
-      <a href="?from_email={{ sender_email }}&page={{ page + 1 }}">Older &rarr;</a>
-    {% endif %}
-  </div>
 {% endblock %}
 """,
     "list.html": """{% extends "base.html" %}
@@ -455,13 +479,37 @@ _TEMPLATES = {
 """,
     "permalink.html": """{% extends "base.html" %}
 {% block title %}{{ newsletter.subject }} · The 1885 Post{% endblock %}
+{% block head %}
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="The 1885 Post">
+  <meta property="og:title" content="{{ newsletter.subject }}">
+  <meta property="og:description" content="Newsletter from {{ newsletter.from_address }} — archived by The 1885 Post.">
+  <meta property="og:url" content="{{ canonical_url }}">
+  {% if newsletter.thumbnail_key %}
+    <meta property="og:image" content="{{ base_url }}/static/newsletters/{{ newsletter.slug }}/{{ newsletter.thumbnail_key }}">
+    <meta name="twitter:card" content="summary_large_image">
+  {% else %}
+    <meta name="twitter:card" content="summary">
+  {% endif %}
+{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
   <div class="layout">
     <div class="content">
       <div class="permalink-meta">
-        <h1>{{ newsletter.subject }}</h1>
-        <div class="meta">From {{ newsletter.from_address }} &middot; {{ (newsletter.received_at or newsletter.created_at)|humandate }} &middot; sent to {{ newsletter.to_address }}</div>
+        <div class="permalink-title-row">
+          <h1>{{ newsletter.subject }}</h1>
+          <button type="button" class="secondary-btn print-btn" onclick="window.print()">
+            <svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <rect x="5" y="1.5" width="10" height="5" stroke="currentColor" stroke-width="1.5"></rect>
+              <rect x="2" y="6.5" width="16" height="8" rx="1.5" stroke="currentColor" stroke-width="1.5"></rect>
+              <rect x="5" y="12" width="10" height="6.5" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.08"></rect>
+              <circle cx="15" cy="9" r="0.9" fill="currentColor"></circle>
+            </svg>
+            Print
+          </button>
+        </div>
+        <div class="meta">From {{ newsletter.from_address }} &middot; {{ (newsletter.received_at or newsletter.created_at)|humandate }}</div>
       </div>
 
       {% if newsletter.sanitized_html %}
@@ -570,6 +618,7 @@ _TEMPLATES = {
 {% block title %}Help · The 1885 Post{% endblock %}
 {% block content %}
   <h1>Help</h1>
+  <p class="meta">Questions or issues? Contact <a href="mailto:suhail.ghafoor@asu.edu">suhail.ghafoor@asu.edu</a>.</p>
 
   <h2>Get your newsletter into the archive</h2>
   <p class="meta">Send (or CC/BCC) your newsletter to <strong>newsletters@evmed.app</strong>
@@ -650,29 +699,6 @@ _TEMPLATES = {
   {% else %}
     <p class="empty">No admin grants yet.</p>
   {% endif %}
-
-  {% if is_super_admin %}
-    <h2>Backfill</h2>
-    <p class="meta">Bulk-runs the same pipeline as a newsletter's own "Reprocess links"
-    button (resolving tracked links, mirroring external images to R2, picking a
-    thumbnail) a few newsletters at a time. Cloudflare limits how much a single request
-    can do, so this processes one small batch per click -- safe to click repeatedly,
-    since anything already resolved/mirrored is skipped rather than re-fetched, and a
-    newsletter that fails is retried later rather than blocking the rest.</p>
-
-    <p class="meta">
-      <strong>{{ backfill_done_count }} of {{ backfill_total }}</strong> newsletters fully backfilled.
-      {% if backfill_failing %}{{ backfill_failing }} have failed at least once so far and will be tried last.{% endif %}
-    </p>
-
-    <form method="post" action="/permissions/backfill">
-      <button type="submit">
-        {%- if backfill_done_count >= backfill_total %}Backfill again (check for anything new)
-        {%- else %}Continue backfill
-        {%- endif %}
-      </button>
-    </form>
-  {% endif %}
 {% endblock %}
 """,
     "embeds.html": """{% extends "base.html" %}
@@ -707,16 +733,19 @@ _TEMPLATES = {
 
   {% if embeds %}
     <table class="admin-table">
-      <thead><tr><th>Name</th><th>Sender</th><th>Shows</th><th>Embed code</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Sender</th><th>Shows</th><th>Created by</th><th>Embed code</th><th></th></tr></thead>
       <tbody>
         {% for e in embeds %}
           <tr>
             <td>{{ e.name }}</td>
             <td>{{ e.sender_email or "All senders" }}</td>
             <td>{{ "All" if e.result_limit == 0 else "Last " ~ e.result_limit }}, {{ "oldest" if e.sort == "oldest" else "newest" }} first</td>
+            <td>{{ e.created_by }}</td>
             <td>
-              <code class="embed-snippet">{{ base_url }}/embed/{{ e.token }}</code>
-              <button type="button" class="secondary-btn copy-btn" data-url="{{ base_url }}/embed/{{ e.token }}?embedded=1">Copy iframe code</button>
+              <div class="embed-code-actions">
+                <button type="button" class="secondary-btn copy-btn copy-iframe-btn" data-url="{{ base_url }}/embed/{{ e.token }}?embedded=1">Copy iframe code</button>
+                <button type="button" class="secondary-btn copy-btn copy-link-btn" data-url="{{ base_url }}/embed/{{ e.token }}">Copy link</button>
+              </div>
             </td>
             <td>
               <a href="/embeds?edit={{ e.token }}" class="edit-link">Edit</a>
@@ -735,8 +764,10 @@ _TEMPLATES = {
   <script>
     document.querySelectorAll(".copy-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const snippet = `<iframe src="${btn.dataset.url}" width="100%" height="400" style="border:0;"></iframe>`;
-        navigator.clipboard.writeText(snippet).then(() => {
+        const text = btn.classList.contains("copy-iframe-btn")
+          ? `<iframe src="${btn.dataset.url}" width="100%" height="400" style="border:0;"></iframe>`
+          : btn.dataset.url;
+        navigator.clipboard.writeText(text).then(() => {
           const original = btn.textContent;
           btn.textContent = "Copied!";
           setTimeout(() => { btn.textContent = original; }, 1500);
@@ -947,6 +978,8 @@ async def home_sender_cards(request: Request):
         return _render(
             "home.html",
             senders=[],
+            total_newsletters=0,
+            total_senders=0,
             identity_display=None,
             identity_email=None,
             is_super_admin=False,
@@ -956,47 +989,8 @@ async def home_sender_cards(request: Request):
     return _render(
         "home.html",
         senders=senders,
-        identity_display=identity_display,
-        identity_email=email,
-        is_super_admin=_is_super_admin(request, email),
-    )
-
-
-@app.get("/sender")
-async def view_sender_feed(request: Request, from_email: str, page: int = 1):
-    """A compact, single-sender feed -- date + subject (+ thumbnail) rows, no
-    sidebar/filter chrome -- linked from a homepage sender card. Mirrors the reading
-    experience of a public embed's list, but for the authenticated site and linking to
-    /n/{slug} instead of /embed/{token}/n/{slug}. Links back to /archive?sender=... for
-    anyone who wants the fuller filter/sort/admin UI."""
-    page = max(page, 1)
-    offset = (page - 1) * _PAGE_SIZE
-    email, identity_display = await _current_user(request)
-    if not email:
-        raise HTTPException(status_code=404, detail="Not found")
-
-    rows = await storage.list_newsletters(
-        _db(request),
-        sender=from_email,
-        sort="newest",
-        limit=_PAGE_SIZE + 1,
-        offset=offset,
-    )
-    has_next = len(rows) > _PAGE_SIZE
-    newsletters = rows[:_PAGE_SIZE]
-    sender_name = parseaddr(newsletters[0].from_address)[0] if newsletters else from_email
-
-    senders = await storage.list_senders(_db(request))
-    count = next((s.count for s in senders if s.from_email == from_email), len(newsletters))
-
-    return _render(
-        "sender_feed.html",
-        sender_email=from_email,
-        sender_name=sender_name or from_email,
-        count=count,
-        newsletters=newsletters,
-        page=page,
-        has_next=has_next,
+        total_newsletters=sum(s.count for s in senders),
+        total_senders=len(senders),
         identity_display=identity_display,
         identity_email=email,
         is_super_admin=_is_super_admin(request, email),
@@ -1065,6 +1059,7 @@ async def view_newsletter(request: Request, slug: str):
         raise HTTPException(status_code=404, detail="Newsletter not found")
 
     admin_senders = await storage.list_admin_senders(_db(request), email)
+    base_url = str(request.base_url).rstrip("/")
     return _render(
         "permalink.html",
         newsletter=newsletter,
@@ -1072,6 +1067,8 @@ async def view_newsletter(request: Request, slug: str):
         identity_email=email,
         is_admin=newsletter.from_email in admin_senders,
         is_super_admin=_is_super_admin(request, email),
+        base_url=base_url,
+        canonical_url=f"{base_url}/n/{slug}",
     )
 
 
@@ -1179,11 +1176,7 @@ async def admin_redirect():
 async def permissions_dashboard(request: Request):
     """Read-only for everyone except the super admin, who can add/revoke grants here.
     Visible to every authenticated user -- this is an internal tool, so who administers
-    which sender isn't sensitive, and full transparency here beats hiding it.
-
-    Backfill progress (total/done/failing) is read live from D1 on every page load --
-    see storage.count_backfill_status -- rather than carried across a redirect, since
-    the underlying tracking is now itself durable (survives a crashed batch)."""
+    which sender isn't sensitive, and full transparency here beats hiding it."""
     email, identity_display = await _current_user(request)
     if not email:
         raise HTTPException(status_code=404, detail="Not found")
@@ -1191,19 +1184,12 @@ async def permissions_dashboard(request: Request):
     is_super = _is_super_admin(request, email)
     grants = await storage.list_admin_grants(_db(request))
 
-    backfill_total = backfill_done_count = backfill_failing = 0
-    if is_super:
-        backfill_total, backfill_done_count, backfill_failing = await storage.count_backfill_status(_db(request))
-
     return _render(
         "permissions.html",
         grants=grants,
         identity_display=identity_display,
         identity_email=email,
         is_super_admin=is_super,
-        backfill_total=backfill_total,
-        backfill_done_count=backfill_done_count,
-        backfill_failing=backfill_failing,
     )
 
 
@@ -1231,30 +1217,16 @@ async def delete_admin_grant(request: Request, grant_id: int):
     return RedirectResponse(url="/permissions", status_code=303)
 
 
-@app.post("/permissions/backfill")
-async def run_backfill(request: Request):
-    """Super-admin only, global (cross-sender) maintenance action -- bulk-runs the same
-    Reprocess pipeline across a handful of not-yet-backfilled newsletters, sharing one
-    external-fetch budget across them. See backfill_batch (worker_entry.py) for how
-    selection and failure-tracking work; no cursor to pass here any more -- progress is
-    durable in D1, so this can be called blind, repeatedly, from a fresh page load."""
-    email, _identity_display = await _current_user(request)
-    if not email or not _is_super_admin(request, email):
-        raise HTTPException(status_code=404, detail="Not found")
-
-    from worker_entry import backfill_batch
-
-    await backfill_batch(_db(request), _bucket(request))
-    return RedirectResponse(url="/permissions", status_code=303)
-
-
 @app.post("/maintenance/backfill")
 async def maintenance_backfill(request: Request):
-    """Script-friendly twin of POST /permissions/backfill for driving the bulk backfill
-    from a local loop -- gated by the BACKFILL_MAINTENANCE_TOKEN secret
-    (X-Maintenance-Token header) instead of an Access session, so it never touches your
-    personal identity/session at all. Returns the batch result as JSON directly rather
-    than a redirect."""
+    """Bulk-runs the same pipeline as a newsletter's own "Reprocess links" (resolving
+    tracked links, mirroring external images to R2, picking a thumbnail) across a
+    handful of not-yet-backfilled newsletters at a time. No admin UI trigger any more --
+    the initial backfill finished -- but kept for any future one-off need, driven from a
+    local loop and gated by the BACKFILL_MAINTENANCE_TOKEN secret (X-Maintenance-Token
+    header) instead of an Access session, so it never touches your personal
+    identity/session at all. Returns the batch result as JSON directly rather than a
+    redirect."""
     token = _env_var(request, "BACKFILL_MAINTENANCE_TOKEN")
     if not token or request.headers.get("X-Maintenance-Token") != token:
         raise HTTPException(status_code=401, detail="Invalid or missing maintenance token")
@@ -1469,6 +1441,7 @@ async def embed_permalink(request: Request, token: str, slug: str):
     embed_back_label = (
         f"Show previous newsletters from {sender_name}" if embed.sender_email else "Show previous newsletters"
     )
+    base_url = str(request.base_url).rstrip("/")
     return _render(
         "permalink.html",
         newsletter=newsletter,
@@ -1478,6 +1451,8 @@ async def embed_permalink(request: Request, token: str, slug: str):
         is_super_admin=False,
         embed_back_url=f"/embed/{token}",
         embed_back_label=embed_back_label,
+        base_url=base_url,
+        canonical_url=f"{base_url}/embed/{token}/n/{slug}",
     )
 
 
