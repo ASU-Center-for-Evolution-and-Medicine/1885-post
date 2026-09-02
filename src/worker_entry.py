@@ -130,6 +130,14 @@ def _asset_digest(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()[:20]
 
 
+def _asset_url(slug: str, key: str) -> str:
+    """Served by view_mirrored_asset (web/app.py), under /static/* rather than /n/{slug}/*
+    so a mirrored image inherits whatever already makes /static/style.css and
+    /static/app-mark.png reachable from a public embed, instead of needing an Access
+    Bypass rule of its own."""
+    return f"/static/newsletters/{slug}/{key}"
+
+
 async def mirror_external_image(
     url: str, slug: str, bucket, semaphore: asyncio.Semaphore
 ) -> tuple[str, str] | None:
@@ -162,7 +170,7 @@ async def mirror_external_image(
                 body,
                 to_js({"httpMetadata": {"contentType": content_type}}, dict_converter=Object.fromEntries),
             )
-            return f"/n/{slug}/assets/{digest}", content_type
+            return _asset_url(slug, digest), content_type
         except Exception as exc:
             print(f"mirror_external_image failed for {url!r}: {exc!r}")
             return None
@@ -179,7 +187,7 @@ async def _mirror_external_assets_in(html: str, slug: str, db, bucket, budget: _
         return html
 
     cached = await storage.get_mirrored_assets(db, slug, candidates)
-    url_to_path = {url: f"/n/{slug}/assets/{key}" for url, key in cached.items()}
+    url_to_path = {url: _asset_url(slug, key) for url, key in cached.items()}
 
     not_cached = [url for url in candidates if url not in cached][:_MAX_NEW_ASSET_FETCHES_PER_RUN]
     # Same reasoning as _resolve_tracked_links_in: request only what this newsletter can

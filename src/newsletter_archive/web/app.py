@@ -790,6 +790,31 @@ async def logo_png():
     return Response(content=base64.b64decode(LOGO_PNG_BASE64), media_type="image/png")
 
 
+@app.get("/static/newsletters/{slug}/{key}")
+async def view_mirrored_asset(request: Request, slug: str, key: str):
+    """Serves an externally-hosted image mirrored into R2 at ingest/reprocess time (see
+    mirror_external_image in worker_entry.py). Deliberately unauthenticated, like the
+    other /static/* routes above -- this same sanitized_html is also rendered inside the
+    public /embed/* permalink page, and an <img> reference in it is fetched by the
+    visitor's browser directly against this path. Living under /static/* means it
+    inherits whatever already makes /static/style.css and /static/app-mark.png reachable
+    from a public embed (both referenced the same way from embed_list.html), rather than
+    needing its own separate Access Bypass rule. `key` is a 20-hex-char hash of the
+    original source URL (80 bits, not enumerable) and carries no more sensitivity than
+    the newsletter body an embed already makes public."""
+    obj = await _bucket(request).get(f"newsletters/{slug}/{key}")
+    if obj is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    # Unlike js.Response.new(...).arrayBuffer() (a JsProxy needing .to_bytes(), used in
+    # worker_entry.py's email() handler), R2's binding-based arrayBuffer() comes back
+    # auto-converted to a plain Python memoryview here -- confirmed against the deployed
+    # Worker, not documented anywhere obvious.
+    data = (await obj.arrayBuffer()).tobytes()
+    content_type = obj.httpMetadata.contentType or "application/octet-stream"
+    return Response(content=data, media_type=content_type)
+
+
 @app.get("/favicon.ico")
 async def favicon_ico():
     return Response(content=base64.b64decode(FAVICON_ICO_BASE64), media_type="image/x-icon")
@@ -875,34 +900,6 @@ async def view_image(request: Request, slug: str, content_id: str):
     if image is None:
         raise HTTPException(status_code=404, detail="Image not found")
     content_type, data = image
-    return Response(content=data, media_type=content_type)
-
-
-@app.get("/n/{slug}/assets/{key}")
-async def view_mirrored_asset(request: Request, slug: str, key: str):
-    """Serves an externally-hosted image mirrored into R2 at ingest/reprocess time (see
-    mirror_external_image in worker_entry.py). Deliberately public, unlike view_image
-    above -- this same sanitized_html is also rendered inside the public /embed/*
-    permalink page, and an <img> reference in it is fetched by the visitor's browser
-    directly against this path, which Access does not bypass by default. `key` is a
-    20-hex-char hash of the original source URL (80 bits), not enumerable, and carries
-    no more sensitivity than the newsletter body an embed already makes public -- same
-    reasoning as the /embed/* routes themselves not calling _current_user.
-
-    For this to actually be reachable on the Access-protected domain from a public
-    embed (as opposed to only via the un-gated workers.dev host), the Access Bypass
-    policy scoped to /embed/* needs a second rule covering /n/*/assets/* -- a manual
-    dashboard step, same as the original /embed/* bypass."""
-    obj = await _bucket(request).get(f"newsletters/{slug}/{key}")
-    if obj is None:
-        raise HTTPException(status_code=404, detail="Asset not found")
-
-    # Unlike js.Response.new(...).arrayBuffer() (a JsProxy needing .to_bytes(), used in
-    # worker_entry.py's email() handler), R2's binding-based arrayBuffer() comes back
-    # auto-converted to a plain Python memoryview here -- confirmed against the deployed
-    # Worker, not documented anywhere obvious.
-    data = (await obj.arrayBuffer()).tobytes()
-    content_type = obj.httpMetadata.contentType or "application/octet-stream"
     return Response(content=data, media_type=content_type)
 
 
