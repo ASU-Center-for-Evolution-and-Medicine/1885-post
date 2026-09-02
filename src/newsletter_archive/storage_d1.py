@@ -14,7 +14,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parseaddr
 
-_LIST_COLUMNS = "id, message_id, from_address, from_email, to_address, subject, received_at, slug, created_at"
+_LIST_COLUMNS = (
+    "id, message_id, from_address, from_email, to_address, subject, received_at, slug, created_at, thumbnail_key"
+)
 _DETAIL_COLUMNS = _LIST_COLUMNS + ", sanitized_html, plain_text_fallback"
 
 
@@ -29,6 +31,7 @@ class NewsletterSummary:
     received_at: str | None
     slug: str
     created_at: str
+    thumbnail_key: str | None = None
 
 
 @dataclass
@@ -50,6 +53,7 @@ async def insert_newsletter(
     raw_eml: bytes,
     sanitized_html: str | None,
     plain_text_fallback: str | None,
+    thumbnail_key: str | None = None,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     await (
@@ -57,8 +61,8 @@ async def insert_newsletter(
             """
             INSERT INTO newsletters
                 (message_id, from_address, from_email, to_address, subject, received_at, slug,
-                 raw_eml, sanitized_html, plain_text_fallback, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 raw_eml, sanitized_html, plain_text_fallback, thumbnail_key, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(slug) DO NOTHING
             """
         )
@@ -73,6 +77,7 @@ async def insert_newsletter(
             raw_eml,
             sanitized_html,
             plain_text_fallback,
+            thumbnail_key,
             now,
         )
         .run()
@@ -111,8 +116,14 @@ async def get_raw_eml(db, slug: str) -> tuple[bytes, str] | None:
     return (row["raw_eml"], row["to_address"]) if row else None
 
 
-async def update_sanitized_html(db, slug: str, sanitized_html: str | None) -> None:
-    await db.prepare("UPDATE newsletters SET sanitized_html = ? WHERE slug = ?").bind(sanitized_html, slug).run()
+async def update_sanitized_html(
+    db, slug: str, sanitized_html: str | None, thumbnail_key: str | None = None
+) -> None:
+    await (
+        db.prepare("UPDATE newsletters SET sanitized_html = ?, thumbnail_key = ? WHERE slug = ?")
+        .bind(sanitized_html, thumbnail_key, slug)
+        .run()
+    )
 
 
 async def get_image(db, slug: str, content_id: str) -> tuple[str, bytes] | None:
@@ -254,6 +265,7 @@ def _row_to_summary(row) -> NewsletterSummary:
         received_at=row["received_at"],
         slug=row["slug"],
         created_at=row["created_at"],
+        thumbnail_key=row["thumbnail_key"],
     )
 
 
@@ -275,6 +287,7 @@ class EmbedQuery:
     sort: str
     created_by: str
     created_at: str
+    show_thumbnails: bool = False
 
 
 async def create_embed_query(
@@ -286,14 +299,16 @@ async def create_embed_query(
     result_limit: int,
     sort: str,
     created_by: str,
+    show_thumbnails: bool = False,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     await (
         db.prepare(
-            "INSERT INTO embed_queries (token, name, sender_email, result_limit, sort, created_by, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO embed_queries "
+            "(token, name, sender_email, result_limit, sort, created_by, show_thumbnails, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         )
-        .bind(token, name, sender_email, result_limit, sort, created_by, now)
+        .bind(token, name, sender_email, result_limit, sort, created_by, int(show_thumbnails), now)
         .run()
     )
 
@@ -316,14 +331,16 @@ async def update_embed_query(
     sender_email: str | None,
     result_limit: int,
     sort: str,
+    show_thumbnails: bool = False,
 ) -> None:
     """Edits an existing embed's query in place -- same token, so any iframe already
     using it keeps working, just serving the newly saved filters going forward."""
     await (
         db.prepare(
-            "UPDATE embed_queries SET name = ?, sender_email = ?, result_limit = ?, sort = ? WHERE token = ?"
+            "UPDATE embed_queries SET name = ?, sender_email = ?, result_limit = ?, sort = ?, "
+            "show_thumbnails = ? WHERE token = ?"
         )
-        .bind(name, sender_email, result_limit, sort, token)
+        .bind(name, sender_email, result_limit, sort, int(show_thumbnails), token)
         .run()
     )
 
@@ -342,93 +359,210 @@ def _row_to_embed_query(row) -> EmbedQuery:
         sort=row["sort"],
         created_by=row["created_by"],
         created_at=row["created_at"],
+        show_thumbnails=bool(row["show_thumbnails"]),
     )
 
 
 async def get_resolved_links(db, tracked_urls: list[str]) -> dict[str, str]:
     """Previously-resolved tracked URLs, so repeat resolution runs don't re-spend
-    subrequest budget on links already solved in an earlier (possibly cut-short) run."""
+    subrequest budget on links already solved in an earlier (possibly cut-short) run.
+    Chunked (see _MAX_IN_CLAUSE_VALUES below) to stay under D1's bound-parameter limit
+    regardless of how many tracked links a newsletter has."""
     if not tracked_urls:
         return {}
-    placeholders = ",".join("?" for _ in tracked_urls)
-    result = await (
-        db.prepare(f"SELECT tracked_url, resolved_url FROM resolved_links WHERE tracked_url IN ({placeholders})")
-        .bind(*tracked_urls)
-        .all()
-    )
-    return {r["tracked_url"]: r["resolved_url"] for r in result.results}
+    resolved: dict[str, str] = {}
+    for chunk in _chunked(tracked_urls, _MAX_IN_CLAUSE_VALUES):
+        placeholders = ",".join("?" for _ in chunk)
+        result = await (
+            db.prepare(f"SELECT tracked_url, resolved_url FROM resolved_links WHERE tracked_url IN ({placeholders})")
+            .bind(*chunk)
+            .all()
+        )
+        resolved.update((r["tracked_url"], r["resolved_url"]) for r in result.results)
+    return resolved
+
+
+# D1 rejects a prepared statement once its total bound-parameter count gets too high
+# ("D1_ERROR: too many SQL variables") -- confirmed in production once enough images
+# needed mirroring in a single newsletter for save_mirrored_assets' multi-row INSERT to
+# cross that line, which made the whole insert (and therefore the newsletter's progress)
+# fail every single time, silently, with the newsletter's mirrored_assets rows always at
+# zero. All of get_resolved_links/save_resolved_links/get_mirrored_assets/
+# save_mirrored_assets below chunk their variable-length parameter lists to stay clear
+# of that limit regardless of how many candidates one newsletter has.
+_MAX_IN_CLAUSE_VALUES = 90  # + 1-2 fixed params per query, comfortably under D1's limit
+_MAX_INSERT_ROWS = 15  # widest row here is 6 columns; 15 * 6 = 90, same margin
+
+
+def _chunked(items: list, size: int) -> list[list]:
+    return [items[i : i + size] for i in range(0, len(items), size)]
 
 
 async def save_resolved_links(db, mapping: dict[str, str]) -> None:
-    """Batched as a single multi-row insert (not one write per link) to keep this cheap
-    against the same per-invocation subrequest budget the resolving itself is limited by."""
+    """Batched as multi-row inserts (not one write per link) to keep this cheap against
+    the same per-invocation subrequest budget the resolving itself is limited by, chunked
+    to stay under D1's bound-parameter limit regardless of how many links there are."""
     if not mapping:
         return
     now = datetime.now(timezone.utc).isoformat()
-    values_sql = ", ".join("(?, ?, ?)" for _ in mapping)
-    params: list[str] = []
-    for tracked_url, resolved_url in mapping.items():
-        params.extend([tracked_url, resolved_url, now])
-    await (
-        db.prepare(
-            f"INSERT INTO resolved_links (tracked_url, resolved_url, resolved_at) VALUES {values_sql} "
-            "ON CONFLICT(tracked_url) DO UPDATE SET resolved_url = excluded.resolved_url, resolved_at = excluded.resolved_at"
+    items = list(mapping.items())
+    for chunk in _chunked(items, _MAX_INSERT_ROWS):
+        values_sql = ", ".join("(?, ?, ?)" for _ in chunk)
+        params: list[str] = []
+        for tracked_url, resolved_url in chunk:
+            params.extend([tracked_url, resolved_url, now])
+        await (
+            db.prepare(
+                f"INSERT INTO resolved_links (tracked_url, resolved_url, resolved_at) VALUES {values_sql} "
+                "ON CONFLICT(tracked_url) DO UPDATE SET resolved_url = excluded.resolved_url, resolved_at = excluded.resolved_at"
+            )
+            .bind(*params)
+            .run()
         )
-        .bind(*params)
-        .run()
-    )
 
 
-async def get_mirrored_assets(db, newsletter_slug: str, source_urls: list[str]) -> dict[str, str]:
-    """Previously-mirrored (source_url -> asset_key) pairs for this newsletter, so a
-    repeat ingest/Reprocess run skips fetching anything an earlier run already mirrored --
-    same "make repeat runs incremental" idea as get_resolved_links above."""
+async def get_mirrored_assets(
+    db, newsletter_slug: str, source_urls: list[str]
+) -> dict[str, tuple[str, int | None]]:
+    """Previously-mirrored (source_url -> (asset_key, size_bytes)) for this newsletter,
+    so a repeat ingest/Reprocess run skips fetching anything an earlier run already
+    mirrored -- same "make repeat runs incremental" idea as get_resolved_links above.
+    size_bytes is also how the thumbnail (the largest mirrored image) gets picked
+    without re-fetching anything just to compare sizes. Chunked (see
+    _MAX_IN_CLAUSE_VALUES below) to stay under D1's bound-parameter limit regardless of
+    how many images a newsletter has."""
     if not source_urls:
         return {}
-    placeholders = ",".join("?" for _ in source_urls)
-    result = await (
-        db.prepare(
-            f"SELECT source_url, asset_key FROM mirrored_assets "
-            f"WHERE newsletter_slug = ? AND source_url IN ({placeholders})"
+    found: dict[str, tuple[str, int | None]] = {}
+    for chunk in _chunked(source_urls, _MAX_IN_CLAUSE_VALUES):
+        placeholders = ",".join("?" for _ in chunk)
+        result = await (
+            db.prepare(
+                f"SELECT source_url, asset_key, size_bytes FROM mirrored_assets "
+                f"WHERE newsletter_slug = ? AND source_url IN ({placeholders})"
+            )
+            .bind(newsletter_slug, *chunk)
+            .all()
         )
-        .bind(newsletter_slug, *source_urls)
-        .all()
-    )
-    return {r["source_url"]: r["asset_key"] for r in result.results}
+        found.update((r["source_url"], (r["asset_key"], r["size_bytes"])) for r in result.results)
+    return found
 
 
 async def save_mirrored_assets(
-    db, newsletter_slug: str, records: list[tuple[str, str, str]]
+    db, newsletter_slug: str, records: list[tuple[str, str, str, int]]
 ) -> None:
-    """`records` is (source_url, asset_key, content_type) triples. Kept indefinitely as
-    provenance -- which original address a mirrored image came from -- not just a cache,
-    so a newsletter's mirrored images can always be traced back or reverted later."""
+    """`records` is (source_url, asset_key, content_type, size_bytes) tuples. Kept
+    indefinitely as provenance -- which original address a mirrored image came from --
+    not just a cache, so a newsletter's mirrored images can always be traced back or
+    reverted later. Chunked into _MAX_INSERT_ROWS-row inserts: this is a 6-column table,
+    so without chunking, a newsletter with as few as ~17 newly-mirrored images in one
+    run already crosses D1's bound-parameter limit -- confirmed in production, where it
+    silently failed the whole insert (and therefore the newsletter's progress) every
+    single time, for every newsletter with enough images to trigger it."""
     if not records:
         return
     now = datetime.now(timezone.utc).isoformat()
-    values_sql = ", ".join("(?, ?, ?, ?, ?)" for _ in records)
-    params: list[str] = []
-    for source_url, asset_key, content_type in records:
-        params.extend([newsletter_slug, source_url, asset_key, content_type, now])
-    await (
-        db.prepare(
-            f"INSERT INTO mirrored_assets "
-            f"(newsletter_slug, source_url, asset_key, content_type, mirrored_at) VALUES {values_sql} "
-            "ON CONFLICT(newsletter_slug, source_url) DO UPDATE SET "
-            "asset_key = excluded.asset_key, content_type = excluded.content_type, "
-            "mirrored_at = excluded.mirrored_at"
+    for chunk in _chunked(records, _MAX_INSERT_ROWS):
+        values_sql = ", ".join("(?, ?, ?, ?, ?, ?)" for _ in chunk)
+        params: list[str] = []
+        for source_url, asset_key, content_type, size_bytes in chunk:
+            params.extend([newsletter_slug, source_url, asset_key, content_type, size_bytes, now])
+        await (
+            db.prepare(
+                f"INSERT INTO mirrored_assets "
+                f"(newsletter_slug, source_url, asset_key, content_type, size_bytes, mirrored_at) VALUES {values_sql} "
+                "ON CONFLICT(newsletter_slug, source_url) DO UPDATE SET "
+                "asset_key = excluded.asset_key, content_type = excluded.content_type, "
+                "size_bytes = excluded.size_bytes, mirrored_at = excluded.mirrored_at"
+            )
+            .bind(*params)
+            .run()
         )
-        .bind(*params)
-        .run()
-    )
 
 
-async def list_slugs_after(db, after_id: int, limit: int) -> list[tuple[int, str]]:
-    """(id, slug) pairs ordered by id, for paging through every newsletter in a stable
-    order -- the cursor a bulk backfill batch resumes from."""
+async def list_slugs_needing_backfill(db, limit: int) -> list[tuple[int, str]]:
+    """(id, slug) for newsletters not yet successfully backfilled, never-attempted ones
+    first and then previously-failed ones ordered by how many times they've failed --
+    so a newsletter that keeps crashing its own request sinks behind fresh ones instead
+    of blocking every batch forever, while still eventually coming back around to it."""
     result = await (
-        db.prepare("SELECT id, slug FROM newsletters WHERE id > ? ORDER BY id ASC LIMIT ?")
-        .bind(after_id, limit)
+        db.prepare(
+            "SELECT id, slug FROM newsletters WHERE backfilled_at IS NULL "
+            "ORDER BY backfill_attempts ASC, id ASC LIMIT ?"
+        )
+        .bind(limit)
         .all()
     )
     return [(r["id"], r["slug"]) for r in result.results]
+
+
+async def mark_backfill_attempt(db, slug: str) -> None:
+    """Recorded *before* the risky reprocess work starts, specifically because a Workers
+    CPU-time-limit termination kills the isolate outright and can't be caught in Python
+    code -- this write is what still leaves a trace of a crashed attempt for the next
+    batch to see and deprioritize."""
+    await db.prepare("UPDATE newsletters SET backfill_attempts = backfill_attempts + 1 WHERE slug = ?").bind(
+        slug
+    ).run()
+
+
+async def mark_backfill_complete(db, slug: str) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    await db.prepare("UPDATE newsletters SET backfilled_at = ? WHERE slug = ?").bind(now, slug).run()
+
+
+async def count_backfill_status(db) -> tuple[int, int, int]:
+    """(total, fully_backfilled, failing_at_least_once) for the /permissions progress
+    display -- "failing" means attempted but not yet successfully completed."""
+    row = await db.prepare(
+        "SELECT COUNT(*) AS total, "
+        "SUM(CASE WHEN backfilled_at IS NOT NULL THEN 1 ELSE 0 END) AS done, "
+        "SUM(CASE WHEN backfilled_at IS NULL AND backfill_attempts > 0 THEN 1 ELSE 0 END) AS failing "
+        "FROM newsletters"
+    ).first()
+    return row["total"] or 0, row["done"] or 0, row["failing"] or 0
+
+
+@dataclass
+class SenderCard:
+    from_email: str
+    name: str
+    count: int
+    latest_received_at: str | None
+    latest_slug: str
+    latest_thumbnail_key: str | None
+
+
+async def list_sender_cards(db) -> list[SenderCard]:
+    """One row per sender: their newsletter count and their single latest newsletter
+    (by received_at, falling back to id to break ties), for the homepage card grid.
+    A plain GROUP BY MAX(received_at) doesn't reliably give you the *other* columns
+    (slug, thumbnail_key) from that specific row, so this uses a window function
+    instead -- deterministic, single query, one row per sender."""
+    result = await db.prepare(
+        """
+        SELECT from_email, from_address, slug, thumbnail_key, received_at, created_at, sender_count
+        FROM (
+            SELECT from_email, from_address, slug, thumbnail_key, received_at, created_at,
+                   COUNT(*) OVER (PARTITION BY from_email) AS sender_count,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY from_email ORDER BY received_at DESC, id DESC
+                   ) AS rn
+            FROM newsletters
+            WHERE from_email IS NOT NULL
+        )
+        WHERE rn = 1
+        ORDER BY received_at DESC
+        """
+    ).all()
+    return [
+        SenderCard(
+            from_email=r["from_email"],
+            name=parseaddr(r["from_address"])[0] or r["from_email"],
+            count=r["sender_count"],
+            latest_received_at=r["received_at"] or r["created_at"],
+            latest_slug=r["slug"],
+            latest_thumbnail_key=r["thumbnail_key"],
+        )
+        for r in result.results
+    ]

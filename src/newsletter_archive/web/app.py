@@ -12,7 +12,6 @@ under the bundled Pyodide filesystem.
 from __future__ import annotations
 
 import base64
-import os
 import secrets
 from datetime import datetime, timezone
 from email.utils import parseaddr
@@ -28,9 +27,15 @@ from .assets import APP_MARK_PNG_BASE64, FAVICON_ICO_BASE64, LOGO_PNG_BASE64
 
 app = FastAPI(title="The 1885 Post")
 
-# Set this before exposing /ingest to anything outside your own testing -- checked
-# against the X-Ingest-Token header on POST /ingest.
-INGEST_TOKEN = os.environ.get("NEWSLETTER_ARCHIVE_INGEST_TOKEN")
+def _env_var(request: Request, name: str) -> str | None:
+    """Cloudflare Worker vars/secrets arrive on the ASGI scope's env object (like
+    SUPER_ADMIN_EMAILS, read the same way in _is_super_admin below), not os.environ --
+    this Python Worker's env is never actually populated into the process environment,
+    so os.environ.get(...) silently returns None for a var/secret that IS set. Confirmed
+    the hard way: NEWSLETTER_ARCHIVE_INGEST_TOKEN and BACKFILL_MAINTENANCE_TOKEN both
+    read as None via os.environ even after being set, making their gates permanently
+    inert regardless of configuration."""
+    return getattr(request.scope["env"], name, None) or None
 
 _PAGE_SIZE = 25
 
@@ -149,9 +154,33 @@ main > h1 {
 }
 
 .newsletter-list { list-style: none; padding: 0; margin: 0; }
-.newsletter-list li { padding: 0.9rem 0; border-bottom: 1px solid var(--border); }
+.newsletter-list li { padding: 0.9rem 0; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 0.9rem; }
+.newsletter-list .li-text { min-width: 0; }
 .newsletter-list a.subject { color: var(--text-primary); font-weight: 600; text-decoration: none; }
 .newsletter-list a.subject:hover { color: var(--asu-maroon); }
+
+.thumb { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; flex: 0 0 auto; }
+.thumb-placeholder {
+  width: 56px; height: 56px; border-radius: 8px; flex: 0 0 auto;
+  background: var(--asu-sand); color: var(--asu-maroon); font-weight: 700; font-size: 1.3rem;
+  display: flex; align-items: center; justify-content: center; border: 1px solid var(--border);
+}
+
+.sender-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1.25rem; }
+.sender-card {
+  display: flex; flex-direction: column; text-decoration: none; color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: var(--card-bg);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.sender-card:hover { transform: translateY(-2px); box-shadow: 0 15px 30px -20px rgba(140, 29, 64, 0.5); }
+.sender-card-thumb { width: 100%; height: 140px; object-fit: cover; display: block; }
+.sender-card-thumb--placeholder {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--asu-sand); color: var(--asu-maroon); font-weight: 700; font-size: 2.5rem;
+}
+.sender-card-body { padding: 0.9rem 1rem; }
+.sender-card-name { font-weight: 700; color: var(--asu-maroon); margin-bottom: 0.25rem; }
+.sender-card-meta { font-size: 0.82rem; color: var(--text-muted); }
 
 .meta { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.2rem; }
 
@@ -187,13 +216,18 @@ main > h1 {
 .sidebar .delete-form { display: block; margin-top: 1rem; }
 .sidebar .delete-btn { width: 100%; padding: 0.5rem 0.7rem; }
 
-.admin-form { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0 1.5rem; }
-.admin-form input, .admin-form select {
+.admin-form { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0 1.5rem; align-items: center; }
+.admin-form input:not([type="checkbox"]), .admin-form select {
   padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 8px;
   background: rgba(255, 255, 255, 0.9); color: var(--text-primary); flex: 1; min-width: 200px; font-size: 1rem;
 }
 .admin-form input[type="number"] { flex: 0 0 auto; min-width: 0; width: 5rem; }
 .admin-form select { flex: 0 0 auto; min-width: 0; width: auto; }
+.admin-form .checkbox-label {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.9rem; color: var(--text-muted); white-space: nowrap;
+}
+.admin-form .checkbox-label input[type="checkbox"] { width: auto; }
 .admin-form input:focus, .admin-form select:focus { outline: 2px solid var(--asu-gold); border-color: var(--asu-maroon); }
 .admin-form button {
   padding: 0.6rem 1rem; border: none; border-radius: 8px;
@@ -262,6 +296,7 @@ _TEMPLATES = {
       {% if embed_back_url %}</div>{% else %}</a>{% endif %}
       <div class="header-right">
         {% if identity_display %}
+          <a class="admin-link" href="/archive">Archive</a>
           <a class="admin-link" href="/help">Help</a>
           <a class="admin-link" href="/embeds">Embeds</a>
           <a class="admin-link" href="/permissions">Permissions</a>
@@ -290,8 +325,72 @@ _TEMPLATES = {
 </body>
 </html>
 """,
-    "list.html": """{% extends "base.html" %}
+    "home.html": """{% extends "base.html" %}
 {% block title %}The 1885 Post{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+  <h1>Newsletters by sender</h1>
+  {% if senders %}
+    <div class="sender-grid">
+      {% for s in senders %}
+        <a class="sender-card" href="/sender?from_email={{ s.from_email }}">
+          {% if s.latest_thumbnail_key %}
+            <img class="sender-card-thumb" src="/static/newsletters/{{ s.latest_slug }}/{{ s.latest_thumbnail_key }}" alt="">
+          {% else %}
+            <div class="sender-card-thumb sender-card-thumb--placeholder">{{ s.name[0]|upper }}</div>
+          {% endif %}
+          <div class="sender-card-body">
+            <div class="sender-card-name">{{ s.name }}</div>
+            <div class="sender-card-meta">{{ s.count }} newsletter{{ "s" if s.count != 1 }} &middot; latest {{ s.latest_received_at|humandate }}</div>
+          </div>
+        </a>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="empty">No newsletters archived yet.</p>
+  {% endif %}
+{% endblock %}
+""",
+    "sender_feed.html": """{% extends "base.html" %}
+{% block title %}{{ sender_name }} · The 1885 Post{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+  <h1>{{ sender_name }}</h1>
+  <p class="meta">{{ count }} newsletter{{ "s" if count != 1 }} archived &middot;
+  <a href="/archive?sender={{ sender_email }}">View with filters and sorting</a></p>
+
+  {% if newsletters %}
+    <ul class="newsletter-list">
+      {% for n in newsletters %}
+        <li>
+          {% if n.thumbnail_key %}
+            <img class="thumb" src="/static/newsletters/{{ n.slug }}/{{ n.thumbnail_key }}" alt="">
+          {% else %}
+            <div class="thumb-placeholder">{{ (n.from_address or "?")[0]|upper }}</div>
+          {% endif %}
+          <div class="li-text">
+            <a class="subject" href="/n/{{ n.slug }}">{{ n.subject }}</a>
+            <div class="meta">{{ (n.received_at or n.created_at)|humandate }}</div>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="empty">No newsletters from this sender.</p>
+  {% endif %}
+
+  <div class="pagination">
+    {% if page > 1 %}
+      <a href="?from_email={{ sender_email }}&page={{ page - 1 }}">&larr; Newer</a>
+    {% else %}<span></span>{% endif %}
+    {% if has_next %}
+      <a href="?from_email={{ sender_email }}&page={{ page + 1 }}">Older &rarr;</a>
+    {% endif %}
+  </div>
+{% endblock %}
+""",
+    "list.html": """{% extends "base.html" %}
+{% block title %}Archive · The 1885 Post{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
   <div class="layout">
@@ -318,15 +417,22 @@ _TEMPLATES = {
         <ul class="newsletter-list">
           {% for n in newsletters %}
             <li>
-              <a class="subject" href="/n/{{ n.slug }}">{{ n.subject }}</a>
-              <div class="meta">
-                {{ n.from_address }} &middot; {{ (n.received_at or n.created_at)|humandate }}
-                {% if is_super_admin or n.from_email in admin_senders %}
-                  &middot;
-                  <form class="delete-form" method="post" action="/n/{{ n.slug }}/delete" onsubmit="return confirm('Delete this newsletter?');">
-                    <button type="submit" class="delete-btn">Delete</button>
-                  </form>
-                {% endif %}
+              {% if n.thumbnail_key %}
+                <img class="thumb" src="/static/newsletters/{{ n.slug }}/{{ n.thumbnail_key }}" alt="">
+              {% else %}
+                <div class="thumb-placeholder">{{ (n.from_address or "?")[0]|upper }}</div>
+              {% endif %}
+              <div class="li-text">
+                <a class="subject" href="/n/{{ n.slug }}">{{ n.subject }}</a>
+                <div class="meta">
+                  {{ n.from_address }} &middot; {{ (n.received_at or n.created_at)|humandate }}
+                  {% if is_super_admin or n.from_email in admin_senders %}
+                    &middot;
+                    <form class="delete-form" method="post" action="/n/{{ n.slug }}/delete" onsubmit="return confirm('Delete this newsletter?');">
+                      <button type="submit" class="delete-btn">Delete</button>
+                    </form>
+                  {% endif %}
+                </div>
               </div>
             </li>
           {% endfor %}
@@ -548,23 +654,20 @@ _TEMPLATES = {
   {% if is_super_admin %}
     <h2>Backfill</h2>
     <p class="meta">Bulk-runs the same pipeline as a newsletter's own "Reprocess links"
-    button (resolving tracked links, mirroring external images to R2) across many
-    newsletters at once, oldest id first. Cloudflare limits how many external links/images
-    can be fetched in a single request, so this processes one batch per click -- safe to
-    click repeatedly or restart, since anything already resolved/mirrored is skipped
-    automatically rather than re-fetched.</p>
+    button (resolving tracked links, mirroring external images to R2, picking a
+    thumbnail) a few newsletters at a time. Cloudflare limits how much a single request
+    can do, so this processes one small batch per click -- safe to click repeatedly,
+    since anything already resolved/mirrored is skipped rather than re-fetched, and a
+    newsletter that fails is retried later rather than blocking the rest.</p>
 
-    {% if backfill_count is not none %}
-      <p class="meta">Last batch: reprocessed {{ backfill_count }} newsletter(s), through id
-      {{ backfill_last_id }}. {% if backfill_done %}No newsletters left after that point.
-      {% else %}More remain -- keep clicking.{% endif %}</p>
-    {% endif %}
+    <p class="meta">
+      <strong>{{ backfill_done_count }} of {{ backfill_total }}</strong> newsletters fully backfilled.
+      {% if backfill_failing %}{{ backfill_failing }} have failed at least once so far and will be tried last.{% endif %}
+    </p>
 
     <form method="post" action="/permissions/backfill">
-      <input type="hidden" name="after_id" value="{{ 0 if (backfill_done or backfill_count is none) else backfill_last_id }}">
       <button type="submit">
-        {%- if backfill_count is none %}Start backfill
-        {%- elif backfill_done %}Backfill again from the start
+        {%- if backfill_done_count >= backfill_total %}Backfill again (check for anything new)
         {%- else %}Continue backfill
         {%- endif %}
       </button>
@@ -591,10 +694,16 @@ _TEMPLATES = {
       <option value="newest" {{ "selected" if edit_embed and edit_embed.sort != "oldest" }}>Newest first</option>
       <option value="oldest" {{ "selected" if edit_embed and edit_embed.sort == "oldest" }}>Oldest first</option>
     </select>
+    <label class="checkbox-label">
+      <input type="checkbox" name="show_thumbnails" {{ "checked" if edit_embed and edit_embed.show_thumbnails }}>
+      Show thumbnails
+    </label>
     <button type="submit">{{ "Save changes" if edit_embed else "Create embed" }}</button>
     {% if edit_embed %}<a href="/embeds" class="cancel-link">Cancel</a>{% endif %}
   </form>
-  <p class="meta" style="margin-top: -0.75rem;">Limit: 0 shows every matching newsletter.</p>
+  <p class="meta" style="margin-top: -0.75rem;">Limit: 0 shows every matching newsletter.
+  New embeds default to no thumbnails, so existing embeds elsewhere never change
+  appearance on their own.</p>
 
   {% if embeds %}
     <table class="admin-table">
@@ -648,8 +757,10 @@ _TEMPLATES = {
   <style>
     body { margin: 0; padding: 0.75rem 1rem; }
     .embed-list { list-style: none; margin: 0; padding: 0; }
-    .embed-list li { padding: 0.6rem 0; border-bottom: 1px solid var(--border); }
+    .embed-list li { padding: 0.6rem 0; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 0.75rem; }
     .embed-list li:last-child { border-bottom: none; }
+    .embed-thumb { width: 48px; height: 48px; border-radius: 8px; object-fit: cover; flex: 0 0 auto; }
+    .embed-list-text { min-width: 0; }
     .embed-date { color: var(--asu-maroon); font-weight: 700; font-size: 0.9rem; margin-bottom: 0.15rem; }
     .embed-list a { color: var(--text-primary); font-weight: 600; text-decoration: none; font-size: 0.95rem; }
     .embed-list a:hover { color: var(--asu-maroon); }
@@ -682,8 +793,13 @@ _TEMPLATES = {
     <ul class="embed-list">
       {% for n in newsletters %}
         <li>
-          <div class="embed-date">{{ (n.received_at or n.created_at)|humandate }}</div>
-          <a href="/embed/{{ token }}/n/{{ n.slug }}" target="_blank" rel="noopener">{{ n.subject }}</a>
+          {% if embed.show_thumbnails and n.thumbnail_key %}
+            <img class="embed-thumb" src="/static/newsletters/{{ n.slug }}/{{ n.thumbnail_key }}" alt="" aria-hidden="true">
+          {% endif %}
+          <div class="embed-list-text">
+            <div class="embed-date">{{ (n.received_at or n.created_at)|humandate }}</div>
+            <a href="/embed/{{ token }}/n/{{ n.slug }}" target="_blank" rel="noopener">{{ n.subject }}</a>
+          </div>
         </li>
       {% endfor %}
     </ul>
@@ -821,12 +937,81 @@ async def favicon_ico():
 
 
 @app.get("/")
-async def list_newsletters(
+async def home_sender_cards(request: Request):
+    """The homepage: one card per sender, showing their latest newsletter's thumbnail,
+    how many newsletters they have archived, and the date of the latest one. The old
+    full sortable/filterable/paginated list this replaced lives on at /archive
+    (view_archive below)."""
+    email, identity_display = await _current_user(request)
+    if not email:
+        return _render(
+            "home.html",
+            senders=[],
+            identity_display=None,
+            identity_email=None,
+            is_super_admin=False,
+        )
+
+    senders = await storage.list_sender_cards(_db(request))
+    return _render(
+        "home.html",
+        senders=senders,
+        identity_display=identity_display,
+        identity_email=email,
+        is_super_admin=_is_super_admin(request, email),
+    )
+
+
+@app.get("/sender")
+async def view_sender_feed(request: Request, from_email: str, page: int = 1):
+    """A compact, single-sender feed -- date + subject (+ thumbnail) rows, no
+    sidebar/filter chrome -- linked from a homepage sender card. Mirrors the reading
+    experience of a public embed's list, but for the authenticated site and linking to
+    /n/{slug} instead of /embed/{token}/n/{slug}. Links back to /archive?sender=... for
+    anyone who wants the fuller filter/sort/admin UI."""
+    page = max(page, 1)
+    offset = (page - 1) * _PAGE_SIZE
+    email, identity_display = await _current_user(request)
+    if not email:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    rows = await storage.list_newsletters(
+        _db(request),
+        sender=from_email,
+        sort="newest",
+        limit=_PAGE_SIZE + 1,
+        offset=offset,
+    )
+    has_next = len(rows) > _PAGE_SIZE
+    newsletters = rows[:_PAGE_SIZE]
+    sender_name = parseaddr(newsletters[0].from_address)[0] if newsletters else from_email
+
+    senders = await storage.list_senders(_db(request))
+    count = next((s.count for s in senders if s.from_email == from_email), len(newsletters))
+
+    return _render(
+        "sender_feed.html",
+        sender_email=from_email,
+        sender_name=sender_name or from_email,
+        count=count,
+        newsletters=newsletters,
+        page=page,
+        has_next=has_next,
+        identity_display=identity_display,
+        identity_email=email,
+        is_super_admin=_is_super_admin(request, email),
+    )
+
+
+@app.get("/archive")
+async def view_archive(
     request: Request,
     sender: str | None = None,
     sort: str = "newest",
     page: int = 1,
 ):
+    """The full sortable/filterable/paginated list -- previously served at "/" before
+    the homepage became the sender-card grid (home_sender_cards above)."""
     page = max(page, 1)
     sort = "oldest" if sort == "oldest" else "newest"
     offset = (page - 1) * _PAGE_SIZE
@@ -917,7 +1102,7 @@ async def delete_newsletter(request: Request, slug: str):
         raise HTTPException(status_code=403, detail="Not an admin for this newsletter's sender")
 
     await storage.delete_newsletter(_db(request), slug)
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/archive", status_code=303)
 
 
 @app.post("/n/{slug}/date")
@@ -991,19 +1176,14 @@ async def admin_redirect():
 
 
 @app.get("/permissions")
-async def permissions_dashboard(
-    request: Request,
-    backfill_last_id: int = 0,
-    backfill_done: bool = False,
-    backfill_count: int | None = None,
-):
+async def permissions_dashboard(request: Request):
     """Read-only for everyone except the super admin, who can add/revoke grants here.
     Visible to every authenticated user -- this is an internal tool, so who administers
     which sender isn't sensitive, and full transparency here beats hiding it.
 
-    backfill_* query params carry the result of the last /permissions/backfill batch
-    across the redirect back here, so the page can show progress without needing
-    server-side state of its own."""
+    Backfill progress (total/done/failing) is read live from D1 on every page load --
+    see storage.count_backfill_status -- rather than carried across a redirect, since
+    the underlying tracking is now itself durable (survives a crashed batch)."""
     email, identity_display = await _current_user(request)
     if not email:
         raise HTTPException(status_code=404, detail="Not found")
@@ -1011,15 +1191,19 @@ async def permissions_dashboard(
     is_super = _is_super_admin(request, email)
     grants = await storage.list_admin_grants(_db(request))
 
+    backfill_total = backfill_done_count = backfill_failing = 0
+    if is_super:
+        backfill_total, backfill_done_count, backfill_failing = await storage.count_backfill_status(_db(request))
+
     return _render(
         "permissions.html",
         grants=grants,
         identity_display=identity_display,
         identity_email=email,
         is_super_admin=is_super,
-        backfill_last_id=backfill_last_id,
-        backfill_done=backfill_done,
-        backfill_count=backfill_count,
+        backfill_total=backfill_total,
+        backfill_done_count=backfill_done_count,
+        backfill_failing=backfill_failing,
     )
 
 
@@ -1050,31 +1234,34 @@ async def delete_admin_grant(request: Request, grant_id: int):
 @app.post("/permissions/backfill")
 async def run_backfill(request: Request):
     """Super-admin only, global (cross-sender) maintenance action -- bulk-runs the same
-    Reprocess pipeline across many newsletters in id order, sharing one external-fetch
-    budget across the whole batch. See backfill_batch (worker_entry.py) for why one
-    request can't just do every newsletter at once, and how repeat/overlapping calls
-    stay cheap (already-resolved/mirrored content is skipped, not re-fetched)."""
+    Reprocess pipeline across a handful of not-yet-backfilled newsletters, sharing one
+    external-fetch budget across them. See backfill_batch (worker_entry.py) for how
+    selection and failure-tracking work; no cursor to pass here any more -- progress is
+    durable in D1, so this can be called blind, repeatedly, from a fresh page load."""
     email, _identity_display = await _current_user(request)
     if not email or not _is_super_admin(request, email):
         raise HTTPException(status_code=404, detail="Not found")
 
-    form = await _parse_form(request)
-    try:
-        after_id = int(form.get("after_id") or 0)
-    except ValueError:
-        after_id = 0
+    from worker_entry import backfill_batch
+
+    await backfill_batch(_db(request), _bucket(request))
+    return RedirectResponse(url="/permissions", status_code=303)
+
+
+@app.post("/maintenance/backfill")
+async def maintenance_backfill(request: Request):
+    """Script-friendly twin of POST /permissions/backfill for driving the bulk backfill
+    from a local loop -- gated by the BACKFILL_MAINTENANCE_TOKEN secret
+    (X-Maintenance-Token header) instead of an Access session, so it never touches your
+    personal identity/session at all. Returns the batch result as JSON directly rather
+    than a redirect."""
+    token = _env_var(request, "BACKFILL_MAINTENANCE_TOKEN")
+    if not token or request.headers.get("X-Maintenance-Token") != token:
+        raise HTTPException(status_code=401, detail="Invalid or missing maintenance token")
 
     from worker_entry import backfill_batch
 
-    result = await backfill_batch(_db(request), _bucket(request), after_id)
-    return RedirectResponse(
-        url=(
-            f"/permissions?backfill_last_id={result['last_id']}"
-            f"&backfill_done={'1' if result['done'] else '0'}"
-            f"&backfill_count={len(result['processed'])}"
-        ),
-        status_code=303,
-    )
+    return await backfill_batch(_db(request), _bucket(request))
 
 
 @app.get("/embeds")
@@ -1136,8 +1323,11 @@ async def _can_manage_embed(request: Request, email: str, embed: storage.EmbedQu
     return False
 
 
-def _parse_embed_form(form: dict[str, str]) -> tuple[str, str | None, int, str]:
-    """(name, sender_email, result_limit, sort) from a create/edit embed form submission."""
+def _parse_embed_form(form: dict[str, str]) -> tuple[str, str | None, int, str, bool]:
+    """(name, sender_email, result_limit, sort, show_thumbnails) from a create/edit
+    embed form submission. An unchecked HTML checkbox submits no field at all, so its
+    absence (not just "off") means False -- this is what makes every existing embed's
+    show_thumbnails default to off."""
     name = (form.get("name") or "").strip()
     sender_email = (form.get("sender_email") or "").strip().lower() or None
     sort = "oldest" if form.get("sort") == "oldest" else "newest"
@@ -1147,7 +1337,8 @@ def _parse_embed_form(form: dict[str, str]) -> tuple[str, str | None, int, str]:
         result_limit = 5
     if result_limit != 0:
         result_limit = max(1, min(50, result_limit))  # 0 is the deliberate "show all" sentinel
-    return name, sender_email, result_limit, sort
+    show_thumbnails = form.get("show_thumbnails") == "on"
+    return name, sender_email, result_limit, sort, show_thumbnails
 
 
 @app.post("/embeds")
@@ -1161,7 +1352,7 @@ async def create_embed(request: Request):
         raise HTTPException(status_code=404, detail="Not found")
 
     form = await _parse_form(request)
-    name, sender_email, result_limit, sort = _parse_embed_form(form)
+    name, sender_email, result_limit, sort, show_thumbnails = _parse_embed_form(form)
 
     if not name:
         raise HTTPException(status_code=400, detail="Name is required")
@@ -1174,6 +1365,7 @@ async def create_embed(request: Request):
         result_limit=result_limit,
         sort=sort,
         created_by=email,
+        show_thumbnails=show_thumbnails,
     )
     return RedirectResponse(url="/embeds", status_code=303)
 
@@ -1192,13 +1384,19 @@ async def edit_embed(request: Request, token: str):
         raise HTTPException(status_code=403, detail="Not allowed to edit this embed")
 
     form = await _parse_form(request)
-    name, sender_email, result_limit, sort = _parse_embed_form(form)
+    name, sender_email, result_limit, sort, show_thumbnails = _parse_embed_form(form)
 
     if not name:
         raise HTTPException(status_code=400, detail="Name is required")
 
     await storage.update_embed_query(
-        _db(request), token, name=name, sender_email=sender_email, result_limit=result_limit, sort=sort
+        _db(request),
+        token,
+        name=name,
+        sender_email=sender_email,
+        result_limit=result_limit,
+        sort=sort,
+        show_thumbnails=show_thumbnails,
     )
     return RedirectResponse(url="/embeds", status_code=303)
 
@@ -1287,8 +1485,10 @@ async def embed_permalink(request: Request, token: str, slug: str):
 async def http_ingest(request: Request, to: str):
     """Push-based / manual ingestion -- same shared-secret gate as before, now calling
     the D1-backed orchestration in worker_entry.py (the counterpart to ingest.ingest()).
-    """
-    if INGEST_TOKEN and request.headers.get("X-Ingest-Token") != INGEST_TOKEN:
+    Set NEWSLETTER_ARCHIVE_INGEST_TOKEN (wrangler secret put) before exposing this to
+    anything outside your own testing -- unset, this route has no protection at all."""
+    ingest_token = _env_var(request, "NEWSLETTER_ARCHIVE_INGEST_TOKEN")
+    if ingest_token and request.headers.get("X-Ingest-Token") != ingest_token:
         raise HTTPException(status_code=401, detail="Invalid or missing ingest token")
 
     raw_bytes = await request.body()
