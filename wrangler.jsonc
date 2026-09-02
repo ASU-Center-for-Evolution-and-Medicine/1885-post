@@ -7,9 +7,7 @@
 	"compatibility_flags": ["python_workers"],
 	"vars": {
 		// Comma-separated emails with unrestricted delete + grant-management rights.
-		// saghafoo@asu.edu is the confirmed Cloudflare Access identity. gmail removed on
-		// request (to see the non-admin view); the other two guessed candidates remain.
-		"SUPER_ADMIN_EMAILS": "saghafoo@asu.edu,suhail.ghafoor@asu.edu,suhail.ghafoor@mailbox.org"
+		"SUPER_ADMIN_EMAILS": "saghafoo@asu.edu,suhail.ghafoor@asu.edu"
 	},
 	"d1_databases": [
 		{
