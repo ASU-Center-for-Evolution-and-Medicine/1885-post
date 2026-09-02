@@ -649,7 +649,7 @@ _TEMPLATES = {
   {% if standalone %}
     <div class="embed-standalone-header">
       <img src="/static/app-mark.png" alt="" aria-hidden="true" width="32" height="19">
-      <span>The 1885 Post &middot; public newsletter feed</span>
+      <span>{{ "Showing newsletters from " ~ sender_name if sender_name else "The 1885 Post · public newsletter feed" }}</span>
     </div>
   {% endif %}
   {% if newsletters %}
@@ -1134,11 +1134,21 @@ async def embed_list(request: Request, token: str):
     newsletters = await storage.list_newsletters(
         _db(request), sender=embed.sender_email, sort=embed.sort, limit=embed.result_limit
     )
+
+    # Prefer the sender's display name (e.g. "Veterans at ASU") over their bare address,
+    # same as the "Show previous newsletters from X" button on the permalink page.
+    sender_name = None
+    if embed.sender_email:
+        sender_name = embed.sender_email
+        if newsletters:
+            sender_name = parseaddr(newsletters[0].from_address)[0] or sender_name
+
     return _render(
         "embed_list.html",
         token=token,
         embed=embed,
         newsletters=newsletters,
+        sender_name=sender_name,
         standalone=not _looks_embedded(request),
     )
 
