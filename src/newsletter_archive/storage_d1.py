@@ -377,3 +377,58 @@ async def save_resolved_links(db, mapping: dict[str, str]) -> None:
         .bind(*params)
         .run()
     )
+
+
+async def get_mirrored_assets(db, newsletter_slug: str, source_urls: list[str]) -> dict[str, str]:
+    """Previously-mirrored (source_url -> asset_key) pairs for this newsletter, so a
+    repeat ingest/Reprocess run skips fetching anything an earlier run already mirrored --
+    same "make repeat runs incremental" idea as get_resolved_links above."""
+    if not source_urls:
+        return {}
+    placeholders = ",".join("?" for _ in source_urls)
+    result = await (
+        db.prepare(
+            f"SELECT source_url, asset_key FROM mirrored_assets "
+            f"WHERE newsletter_slug = ? AND source_url IN ({placeholders})"
+        )
+        .bind(newsletter_slug, *source_urls)
+        .all()
+    )
+    return {r["source_url"]: r["asset_key"] for r in result.results}
+
+
+async def save_mirrored_assets(
+    db, newsletter_slug: str, records: list[tuple[str, str, str]]
+) -> None:
+    """`records` is (source_url, asset_key, content_type) triples. Kept indefinitely as
+    provenance -- which original address a mirrored image came from -- not just a cache,
+    so a newsletter's mirrored images can always be traced back or reverted later."""
+    if not records:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    values_sql = ", ".join("(?, ?, ?, ?, ?)" for _ in records)
+    params: list[str] = []
+    for source_url, asset_key, content_type in records:
+        params.extend([newsletter_slug, source_url, asset_key, content_type, now])
+    await (
+        db.prepare(
+            f"INSERT INTO mirrored_assets "
+            f"(newsletter_slug, source_url, asset_key, content_type, mirrored_at) VALUES {values_sql} "
+            "ON CONFLICT(newsletter_slug, source_url) DO UPDATE SET "
+            "asset_key = excluded.asset_key, content_type = excluded.content_type, "
+            "mirrored_at = excluded.mirrored_at"
+        )
+        .bind(*params)
+        .run()
+    )
+
+
+async def list_slugs_after(db, after_id: int, limit: int) -> list[tuple[int, str]]:
+    """(id, slug) pairs ordered by id, for paging through every newsletter in a stable
+    order -- the cursor a bulk backfill batch resumes from."""
+    result = await (
+        db.prepare("SELECT id, slug FROM newsletters WHERE id > ? ORDER BY id ASC LIMIT ?")
+        .bind(after_id, limit)
+        .all()
+    )
+    return [(r["id"], r["slug"]) for r in result.results]

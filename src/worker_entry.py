@@ -56,6 +56,30 @@ _MAX_NEW_RESOLUTIONS_PER_RUN = 20
 _MAX_NEW_ASSET_FETCHES_PER_RUN = 20
 _MIN_MIRRORED_IMAGE_BYTES = 200  # below this, treat as a same-shape tracking pixel
 
+# Bulk backfill (see backfill_batch): a single request works through many newsletters,
+# so the two per-newsletter caps above (worst case 20 + 20 = 40) aren't enough on their
+# own -- a handful of link/image-heavy newsletters in one batch could still add up past
+# the external-fetch limit. _FetchBudget is shared across every newsletter in a batch so
+# the batch stops admitting new work before that happens, rather than per newsletter.
+_BULK_FETCH_BUDGET = 35
+_MAX_NEWSLETTERS_PER_BATCH = 30
+
+
+class _FetchBudget:
+    """Mutable shared cap on new external fetches across an entire bulk-backfill batch
+    (as opposed to _MAX_NEW_RESOLUTIONS_PER_RUN/_MAX_NEW_ASSET_FETCHES_PER_RUN, which cap
+    a single newsletter). `take()` hands out at most what's left, so a request/CSS-image
+    pass that asks for its usual 20 only gets however much of that 20 the batch can still
+    afford."""
+
+    def __init__(self, remaining: int):
+        self.remaining = remaining
+
+    def take(self, requested: int) -> int:
+        n = max(0, min(requested, self.remaining))
+        self.remaining -= n
+        return n
+
 
 async def resolve_link(url: str, semaphore: asyncio.Semaphore) -> str:
     """Follow a tracked link's redirect chain to its real, permanent destination.
@@ -74,13 +98,19 @@ async def resolve_link(url: str, semaphore: asyncio.Semaphore) -> str:
             return url
 
 
-async def _resolve_tracked_links_in(html: str, db) -> str:
+async def _resolve_tracked_links_in(html: str, db, budget: _FetchBudget | None = None) -> str:
     tracked = find_trackable_links(html)
     if not tracked:
         return html
 
     cached = await storage.get_resolved_links(db, list(tracked))
-    to_resolve = [url for url in tracked if url not in cached][:_MAX_NEW_RESOLUTIONS_PER_RUN]
+    not_cached = [url for url in tracked if url not in cached][:_MAX_NEW_RESOLUTIONS_PER_RUN]
+    # Ask the shared batch budget for only what this newsletter can actually use, not a
+    # blind _MAX_NEW_RESOLUTIONS_PER_RUN -- otherwise a newsletter with e.g. 3 candidates
+    # would reserve (and waste) budget for 20, starving whatever comes after it in the
+    # same bulk-backfill batch.
+    cap = budget.take(len(not_cached)) if budget else len(not_cached)
+    to_resolve = not_cached[:cap]
 
     resolved = dict(cached)
     if to_resolve:
@@ -100,10 +130,13 @@ def _asset_digest(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()[:20]
 
 
-async def mirror_external_image(url: str, slug: str, bucket, semaphore: asyncio.Semaphore) -> str | None:
+async def mirror_external_image(
+    url: str, slug: str, bucket, semaphore: asyncio.Semaphore
+) -> tuple[str, str] | None:
     """Fetch an externally-hosted image once and store it permanently in R2, so the
     newsletter keeps rendering correctly even if the original ESP-hosted copy later
-    goes away. Only called for URLs not already found in R2 by _mirror_external_assets_in.
+    goes away. Only called for URLs not already found in mirrored_assets by
+    _mirror_external_assets_in. Returns (local_path, content_type) on success.
 
     Fails open (returns None, leaving the original external URL in place) on any error
     or validation failure -- a live external image beats a broken rewrite, same
@@ -129,62 +162,64 @@ async def mirror_external_image(url: str, slug: str, bucket, semaphore: asyncio.
                 body,
                 to_js({"httpMetadata": {"contentType": content_type}}, dict_converter=Object.fromEntries),
             )
-            return f"/n/{slug}/assets/{digest}"
+            return f"/n/{slug}/assets/{digest}", content_type
         except Exception as exc:
             print(f"mirror_external_image failed for {url!r}: {exc!r}")
             return None
 
 
-async def _mirror_external_assets_in(html: str, slug: str, bucket) -> str:
+async def _mirror_external_assets_in(html: str, slug: str, db, bucket, budget: _FetchBudget | None = None) -> str:
     """Mirror externally-hosted <img> and CSS background-image sources into R2 and
-    rewrite the HTML to point at the mirrored copies. R2 itself is the cache -- a
-    bucket.head() check (cheap, doesn't compete with the external-fetch budget new
-    fetches draw from) is enough to make a repeat ingest/Reprocess run skip anything an
-    earlier run already mirrored, the same "make repeat runs incremental" idea as
-    resolved_links (storage_d1.py), without needing a table of its own."""
+    rewrite the HTML to point at the mirrored copies. mirrored_assets (storage_d1.py) is
+    both the cache -- a repeat ingest/Reprocess run skips anything an earlier run already
+    mirrored -- and the permanent provenance record of which source URL each mirrored
+    image came from."""
     candidates = sorted(find_external_images(html) | find_external_css_images(html))
     if not candidates:
         return html
 
-    url_to_path: dict[str, str] = {}
-    to_fetch: list[str] = []
-    for url in candidates:
-        digest = _asset_digest(url)
-        try:
-            already_mirrored = await bucket.head(f"newsletters/{slug}/{digest}") is not None
-        except Exception as exc:
-            print(f"mirror_external_image head failed for {url!r}: {exc!r}")
-            already_mirrored = False
-        if already_mirrored:
-            url_to_path[url] = f"/n/{slug}/assets/{digest}"
-        else:
-            to_fetch.append(url)
+    cached = await storage.get_mirrored_assets(db, slug, candidates)
+    url_to_path = {url: f"/n/{slug}/assets/{key}" for url, key in cached.items()}
 
-    to_fetch = to_fetch[:_MAX_NEW_ASSET_FETCHES_PER_RUN]
+    not_cached = [url for url in candidates if url not in cached][:_MAX_NEW_ASSET_FETCHES_PER_RUN]
+    # Same reasoning as _resolve_tracked_links_in: request only what this newsletter can
+    # actually use from the shared batch budget, not the blind per-run cap.
+    cap = budget.take(len(not_cached)) if budget else len(not_cached)
+    to_fetch = not_cached[:cap]
+
     if to_fetch:
         semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RESOLUTIONS)
         results = await asyncio.gather(*(mirror_external_image(url, slug, bucket, semaphore) for url in to_fetch))
-        for url, path in zip(to_fetch, results):
-            if path:
-                url_to_path[url] = path
+        newly_mirrored: list[tuple[str, str, str]] = []
+        for url, result in zip(to_fetch, results):
+            if result is None:
+                continue
+            path, content_type = result
+            url_to_path[url] = path
+            newly_mirrored.append((url, path.rsplit("/", 1)[-1], content_type))
+        await storage.save_mirrored_assets(db, slug, newly_mirrored)
 
     html = rewrite_external_images(html, url_to_path)
     html = rewrite_css_image_urls(html, url_to_path)
     return html
 
 
-async def _build_sanitized_html(parsed, slug: str, db, bucket) -> str | None:
+async def _build_sanitized_html(
+    parsed, slug: str, db, bucket, budget: _FetchBudget | None = None
+) -> str | None:
     """The full body-rewrite pipeline, shared by fresh ingestion and reprocessing an
     already-archived newsletter's stored raw_eml: resolve tracked links to their real
     destination *before* classifying, since a tracked href is opaque and reveals nothing
-    about whether it's really an unsubscribe/preference-center link."""
+    about whether it's really an unsubscribe/preference-center link. `budget` is only
+    passed by backfill_batch, sharing one external-fetch cap across many newsletters
+    processed in the same request -- a single ingest/Reprocess call is unaffected."""
     html = parsed.html_body
     if not html:
         return None
 
-    html = await _resolve_tracked_links_in(html, db)
+    html = await _resolve_tracked_links_in(html, db, budget)
     html = neutralize_unsubscribe_links(html)
-    html = await _mirror_external_assets_in(html, slug, bucket)
+    html = await _mirror_external_assets_in(html, slug, db, bucket, budget)
 
     if parsed.inline_images:
         url_by_content_id = {
@@ -236,7 +271,9 @@ async def ingest_via_d1(raw_bytes: bytes, to_address: str, db, bucket) -> storag
     return await storage.get_by_slug(db, slug)
 
 
-async def reprocess_via_d1(slug: str, db, bucket) -> storage.Newsletter | None:
+async def reprocess_via_d1(
+    slug: str, db, bucket, budget: _FetchBudget | None = None
+) -> storage.Newsletter | None:
     """Re-run the parse/resolve/sanitize pipeline against a newsletter's already-stored
     raw_eml and overwrite sanitized_html in place -- same row, same slug, nothing else
     touched. For backfilling newsletters ingested before a sanitizer change (e.g. link
@@ -249,7 +286,7 @@ async def reprocess_via_d1(slug: str, db, bucket) -> storage.Newsletter | None:
     raw_eml = bytes(raw_eml)
 
     parsed = parse_email(raw_eml)
-    html = await _build_sanitized_html(parsed, slug, db, bucket)
+    html = await _build_sanitized_html(parsed, slug, db, bucket, budget)
     await storage.update_sanitized_html(db, slug, html)
 
     newsletter_id = await storage.get_id_by_slug(db, slug)
@@ -263,6 +300,37 @@ async def reprocess_via_d1(slug: str, db, bucket) -> storage.Newsletter | None:
         )
 
     return await storage.get_by_slug(db, slug)
+
+
+async def backfill_batch(db, bucket, after_id: int) -> dict:
+    """Reprocess up to _MAX_NEWSLETTERS_PER_BATCH newsletters (id-ordered, resuming after
+    `after_id` -- how the admin UI carries a cursor across separate requests/clicks),
+    sharing one _BULK_FETCH_BUDGET across all of them. Cheap to call repeatedly: a
+    newsletter that's already fully mirrored/resolved costs one batched D1 lookup per
+    pass and no new fetches at all, so most of a batch's real budget goes toward
+    newsletters that still need work rather than re-checking already-done ones.
+
+    A newsletter unusually heavy in both tracked links and external images could in
+    theory need more than one batch's whole budget to fully finish in a single pass --
+    it's still marked processed and the cursor still advances past it, so a fully
+    finished bulk run doesn't loop forever; anything not fully caught up gets the rest
+    of the way there the next time this batch (or a plain "Reprocess links" click on that
+    one newsletter) reaches it.
+    """
+    budget = _FetchBudget(_BULK_FETCH_BUDGET)
+    rows = await storage.list_slugs_after(db, after_id, limit=_MAX_NEWSLETTERS_PER_BATCH)
+
+    processed: list[str] = []
+    last_id = after_id
+    for newsletter_id, slug in rows:
+        if budget.remaining <= 0:
+            break
+        await reprocess_via_d1(slug, db, bucket, budget)
+        processed.append(slug)
+        last_id = newsletter_id
+
+    done = not await storage.list_slugs_after(db, last_id, limit=1)
+    return {"processed": processed, "last_id": last_id, "done": done}
 
 
 class Default(WorkerEntrypoint):

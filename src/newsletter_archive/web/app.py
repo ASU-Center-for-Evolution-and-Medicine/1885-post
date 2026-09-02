@@ -544,6 +544,32 @@ _TEMPLATES = {
   {% else %}
     <p class="empty">No admin grants yet.</p>
   {% endif %}
+
+  {% if is_super_admin %}
+    <h2>Backfill</h2>
+    <p class="meta">Bulk-runs the same pipeline as a newsletter's own "Reprocess links"
+    button (resolving tracked links, mirroring external images to R2) across many
+    newsletters at once, oldest id first. Cloudflare limits how many external links/images
+    can be fetched in a single request, so this processes one batch per click -- safe to
+    click repeatedly or restart, since anything already resolved/mirrored is skipped
+    automatically rather than re-fetched.</p>
+
+    {% if backfill_count is not none %}
+      <p class="meta">Last batch: reprocessed {{ backfill_count }} newsletter(s), through id
+      {{ backfill_last_id }}. {% if backfill_done %}No newsletters left after that point.
+      {% else %}More remain -- keep clicking.{% endif %}</p>
+    {% endif %}
+
+    <form method="post" action="/permissions/backfill">
+      <input type="hidden" name="after_id" value="{{ 0 if (backfill_done or backfill_count is none) else backfill_last_id }}">
+      <button type="submit">
+        {%- if backfill_count is none %}Start backfill
+        {%- elif backfill_done %}Backfill again from the start
+        {%- else %}Continue backfill
+        {%- endif %}
+      </button>
+    </form>
+  {% endif %}
 {% endblock %}
 """,
     "embeds.html": """{% extends "base.html" %}
@@ -968,10 +994,19 @@ async def admin_redirect():
 
 
 @app.get("/permissions")
-async def permissions_dashboard(request: Request):
+async def permissions_dashboard(
+    request: Request,
+    backfill_last_id: int = 0,
+    backfill_done: bool = False,
+    backfill_count: int | None = None,
+):
     """Read-only for everyone except the super admin, who can add/revoke grants here.
     Visible to every authenticated user -- this is an internal tool, so who administers
-    which sender isn't sensitive, and full transparency here beats hiding it."""
+    which sender isn't sensitive, and full transparency here beats hiding it.
+
+    backfill_* query params carry the result of the last /permissions/backfill batch
+    across the redirect back here, so the page can show progress without needing
+    server-side state of its own."""
     email, identity_display = await _current_user(request)
     if not email:
         raise HTTPException(status_code=404, detail="Not found")
@@ -985,6 +1020,9 @@ async def permissions_dashboard(request: Request):
         identity_display=identity_display,
         identity_email=email,
         is_super_admin=is_super,
+        backfill_last_id=backfill_last_id,
+        backfill_done=backfill_done,
+        backfill_count=backfill_count,
     )
 
 
@@ -1010,6 +1048,36 @@ async def delete_admin_grant(request: Request, grant_id: int):
 
     await storage.delete_admin_grant(_db(request), grant_id)
     return RedirectResponse(url="/permissions", status_code=303)
+
+
+@app.post("/permissions/backfill")
+async def run_backfill(request: Request):
+    """Super-admin only, global (cross-sender) maintenance action -- bulk-runs the same
+    Reprocess pipeline across many newsletters in id order, sharing one external-fetch
+    budget across the whole batch. See backfill_batch (worker_entry.py) for why one
+    request can't just do every newsletter at once, and how repeat/overlapping calls
+    stay cheap (already-resolved/mirrored content is skipped, not re-fetched)."""
+    email, _identity_display = await _current_user(request)
+    if not email or not _is_super_admin(request, email):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    form = await _parse_form(request)
+    try:
+        after_id = int(form.get("after_id") or 0)
+    except ValueError:
+        after_id = 0
+
+    from worker_entry import backfill_batch
+
+    result = await backfill_batch(_db(request), _bucket(request), after_id)
+    return RedirectResponse(
+        url=(
+            f"/permissions?backfill_last_id={result['last_id']}"
+            f"&backfill_done={'1' if result['done'] else '0'}"
+            f"&backfill_count={len(result['processed'])}"
+        ),
+        status_code=303,
+    )
 
 
 @app.get("/embeds")
