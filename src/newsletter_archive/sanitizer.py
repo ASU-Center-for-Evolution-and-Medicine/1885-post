@@ -174,15 +174,23 @@ def find_external_css_images(html: str) -> set[str]:
 
 
 def rewrite_external_images(html: str, url_to_path: dict[str, str]) -> str:
-    """Point external <img src> values at their mirrored copy. Anything not in
-    `url_to_path` (mirroring failed, was skipped, or wasn't a candidate) is left
-    untouched -- same fail-open shape as rewrite_tracked_links."""
+    """Point external <img src> values at their mirrored copy, while keeping the
+    original address visible on the element itself -- a data-original-src attribute
+    (inspectable in devtools/view-source) plus a native hover tooltip via title -- so
+    where an image actually came from isn't only recoverable via the mirrored_assets
+    table. Anything not in `url_to_path` (mirroring failed, was skipped, or wasn't a
+    candidate) is left untouched -- same fail-open shape as rewrite_tracked_links."""
     if not url_to_path:
         return html
     soup = BeautifulSoup(html, "html.parser")
     for img in soup.find_all("img", src=True):
-        if img["src"] in url_to_path:
-            img["src"] = url_to_path[img["src"]]
+        original = img["src"]
+        if original in url_to_path:
+            img["src"] = url_to_path[original]
+            img["data-original-src"] = original
+            note = f"Mirrored from: {original}"
+            existing_title = (img.get("title") or "").strip()
+            img["title"] = f"{existing_title} ({note})" if existing_title else note
     return str(soup)
 
 

@@ -140,13 +140,34 @@ def test_rewrite_external_images_only_touches_mirrored_urls():
         '<img src="https://image.reply.asu.edu/lib/abc/photo.jpg">'
         '<img src="https://click.reply.asu.edu/open.aspx?d=1" width="1" height="1">'
     )
-    mirrored = {"https://image.reply.asu.edu/lib/abc/photo.jpg": "/n/some-slug/assets/deadbeef"}
+    original_url = "https://image.reply.asu.edu/lib/abc/photo.jpg"
+    mirrored = {original_url: "/n/some-slug/assets/deadbeef"}
     rewritten = rewrite_external_images(html, mirrored)
     soup = BeautifulSoup(rewritten, "html.parser")
-    srcs = [img["src"] for img in soup.find_all("img")]
+    imgs = soup.find_all("img")
+    srcs = [img["src"] for img in imgs]
 
     assert "/n/some-slug/assets/deadbeef" in srcs
     assert "https://click.reply.asu.edu/open.aspx?d=1" in srcs  # tracking pixel untouched
+
+    mirrored_img = next(img for img in imgs if img["src"] == "/n/some-slug/assets/deadbeef")
+    assert mirrored_img["data-original-src"] == original_url
+    assert original_url in mirrored_img["title"]
+
+    untouched_img = next(img for img in imgs if img["src"] == "https://click.reply.asu.edu/open.aspx?d=1")
+    assert untouched_img.get("data-original-src") is None
+    assert untouched_img.get("title") is None
+
+
+def test_rewrite_external_images_preserves_existing_title():
+    html = '<img src="https://image.reply.asu.edu/lib/abc/photo.jpg" title="Team photo">'
+    original_url = "https://image.reply.asu.edu/lib/abc/photo.jpg"
+    rewritten = rewrite_external_images(html, {original_url: "/n/some-slug/assets/deadbeef"})
+    soup = BeautifulSoup(rewritten, "html.parser")
+    img = soup.find("img")
+
+    assert img["title"].startswith("Team photo")
+    assert original_url in img["title"]
 
 
 def test_find_external_css_images_excludes_merge_tagged_tracking_pixel():
