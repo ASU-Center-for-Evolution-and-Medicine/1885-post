@@ -19,6 +19,13 @@
 			"remote": true
 		}
 	],
+	"r2_buckets": [
+		{
+			"binding": "ASSETS",
+			"bucket_name": "newsletter-archive-assets",
+			"remote": true
+		}
+	],
 	"observability": {
 		"enabled": true
 	}

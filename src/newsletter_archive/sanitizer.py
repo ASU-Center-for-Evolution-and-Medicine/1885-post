@@ -117,3 +117,94 @@ def rewrite_inline_image_sources(html: str, url_by_content_id: dict[str, str]) -
         if src.startswith("cid:") and src[len("cid:") :] in url_by_content_id:
             img["src"] = url_by_content_id[src[len("cid:") :]]
     return str(soup)
+
+
+# Salesforce Marketing Cloud (and other ESP) merge tags left unresolved in a stored copy
+# -- e.g. "%%subscriberid%%", "%%ex2;listsubid%%" -- mean the URL is templated and was
+# never personalized for this specific send. Confirmed against real archived newsletters:
+# always on tracking-pixel URLs, never on real content images. Not worth ever fetching.
+_MERGE_TAG = re.compile(r"%%")
+
+_CSS_URL = re.compile(r"""url\(\s*(['"]?)(https?://[^'")]+)\1\s*\)""", re.IGNORECASE)
+
+
+def _is_external(url: str) -> bool:
+    return url.startswith("http://") or url.startswith("https://")
+
+
+def _is_tracking_pixel(img) -> bool:
+    """1x1 open-tracking pixel, going purely on the (width, height) attributes -- the
+    shape every such pixel found in this archive actually uses. A real image with those
+    exact dimensions would be pointless to render anyway."""
+
+    def _is_one(value: str | None) -> bool:
+        return (value or "").strip().rstrip("px") == "1"
+
+    return _is_one(img.get("width")) and _is_one(img.get("height"))
+
+
+def find_external_images(html: str) -> set[str]:
+    """External (non-cid) <img src> values worth mirroring to durable storage --
+    excluding unresolved merge-tag URLs and 1x1 tracking pixels, neither of which are
+    real content worth preserving."""
+    soup = BeautifulSoup(html, "html.parser")
+    return {
+        img["src"]
+        for img in soup.find_all("img", src=True)
+        if _is_external(img["src"])
+        and not _MERGE_TAG.search(img["src"])
+        and not _is_tracking_pixel(img)
+    }
+
+
+def find_external_css_images(html: str) -> set[str]:
+    """External background-image url(...) references inside <style> blocks -- some ESP
+    templates (e.g. a CSS-only "image carousel") set imagery this way instead of <img>.
+    BeautifulSoup treats <style> content as opaque text, so this is a plain regex scan
+    rather than a soup attribute lookup."""
+    soup = BeautifulSoup(html, "html.parser")
+    urls: set[str] = set()
+    for style in soup.find_all("style"):
+        css = style.string or ""
+        for match in _CSS_URL.finditer(css):
+            url = match.group(2)
+            if not _MERGE_TAG.search(url):
+                urls.add(url)
+    return urls
+
+
+def rewrite_external_images(html: str, url_to_path: dict[str, str]) -> str:
+    """Point external <img src> values at their mirrored copy. Anything not in
+    `url_to_path` (mirroring failed, was skipped, or wasn't a candidate) is left
+    untouched -- same fail-open shape as rewrite_tracked_links."""
+    if not url_to_path:
+        return html
+    soup = BeautifulSoup(html, "html.parser")
+    for img in soup.find_all("img", src=True):
+        if img["src"] in url_to_path:
+            img["src"] = url_to_path[img["src"]]
+    return str(soup)
+
+
+def rewrite_css_image_urls(html: str, url_to_path: dict[str, str]) -> str:
+    """Point external CSS background-image url(...) references at their mirrored copy."""
+    if not url_to_path:
+        return html
+    soup = BeautifulSoup(html, "html.parser")
+    changed = False
+    for style in soup.find_all("style"):
+        css = style.string
+        if not css:
+            continue
+
+        def _replace(match: re.Match) -> str:
+            quote, url = match.group(1), match.group(2)
+            if url in url_to_path:
+                return f"url({quote}{url_to_path[url]}{quote})"
+            return match.group(0)
+
+        new_css = _CSS_URL.sub(_replace, css)
+        if new_css != css:
+            style.string = new_css
+            changed = True
+    return str(soup) if changed else html

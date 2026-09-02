@@ -4,8 +4,12 @@ from bs4 import BeautifulSoup
 
 from newsletter_archive.parser import parse_email
 from newsletter_archive.sanitizer import (
+    find_external_css_images,
+    find_external_images,
     find_trackable_links,
     neutralize_unsubscribe_links,
+    rewrite_css_image_urls,
+    rewrite_external_images,
     rewrite_tracked_links,
 )
 
@@ -112,3 +116,65 @@ def test_smc_profile_center_link_is_neutralized_even_unresolved():
     assert links_by_text["Update Profile"] is None
     # untouched -- still the tracked link, since this test doesn't resolve it
     assert links_by_text["Read the newsletter"] == "https://click.reply.asu.edu/?qs=abc"
+
+
+# --- external image mirroring -----------------------------------------------------
+# Fixtures below are modeled on real patterns found in the live archive: a normal
+# content image, a 1x1 open-tracking pixel (with and without an unresolved SMC merge
+# tag), and a CSS-only "image carousel" template that sets backgrounds via <style>
+# rather than <img> -- itself sometimes abused for the same kind of tracking pixel.
+
+
+def test_find_external_images_excludes_tracking_pixels_and_merge_tags():
+    html = (
+        '<img src="https://image.reply.asu.edu/lib/abc/photo.jpg" alt="Real photo">'
+        '<img src="https://click.reply.asu.edu/open.aspx?d=1" width="1" height="1" alt="">'
+        '<img src="https://hzqaoo6b.emltrk.com/v2/hzqaoo6b?i=%%subscriberid%%" width="1" height="1">'
+        '<img src="cid:logo123" alt="inline logo">'
+    )
+    assert find_external_images(html) == {"https://image.reply.asu.edu/lib/abc/photo.jpg"}
+
+
+def test_rewrite_external_images_only_touches_mirrored_urls():
+    html = (
+        '<img src="https://image.reply.asu.edu/lib/abc/photo.jpg">'
+        '<img src="https://click.reply.asu.edu/open.aspx?d=1" width="1" height="1">'
+    )
+    mirrored = {"https://image.reply.asu.edu/lib/abc/photo.jpg": "/n/some-slug/assets/deadbeef"}
+    rewritten = rewrite_external_images(html, mirrored)
+    soup = BeautifulSoup(rewritten, "html.parser")
+    srcs = [img["src"] for img in soup.find_all("img")]
+
+    assert "/n/some-slug/assets/deadbeef" in srcs
+    assert "https://click.reply.asu.edu/open.aspx?d=1" in srcs  # tracking pixel untouched
+
+
+def test_find_external_css_images_excludes_merge_tagged_tracking_pixel():
+    html = (
+        "<style>"
+        ".mc-carousel-id-1 .ie-img1 span {"
+        " background-image: url(https://image.reply.asu.edu/lib/fe37/photo.jpg); }"
+        "table.moz-email-headers-table {"
+        " background-image:url('https://xqouujdu.emltrk.com/v2/xqouujdu?i=%%subscriberid%%')"
+        " }"
+        "</style>"
+    )
+    assert find_external_css_images(html) == {"https://image.reply.asu.edu/lib/fe37/photo.jpg"}
+
+
+def test_rewrite_css_image_urls_only_touches_mirrored_urls():
+    html = (
+        "<style>.hero { background-image: url(https://image.reply.asu.edu/lib/fe37/photo.jpg); }"
+        " .tracker { background-image:url('https://xqouujdu.emltrk.com/v2/xqouujdu?i=%%subscriberid%%') }"
+        "</style>"
+    )
+    mirrored = {"https://image.reply.asu.edu/lib/fe37/photo.jpg": "/n/some-slug/assets/cafef00d"}
+    rewritten = rewrite_css_image_urls(html, mirrored)
+
+    assert "url(/n/some-slug/assets/cafef00d)" in rewritten
+    assert "xqouujdu.emltrk.com" in rewritten  # tracking pixel background left untouched
+
+
+def test_rewrite_css_image_urls_is_noop_without_matches():
+    html = "<style>.hero { background-image: url(https://example.com/a.jpg); }</style>"
+    assert rewrite_css_image_urls(html, {}) == html
