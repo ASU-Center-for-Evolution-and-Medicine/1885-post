@@ -581,7 +581,7 @@ _TEMPLATES = {
             <td>{{ "All" if e.result_limit == 0 else "Last " ~ e.result_limit }}, {{ "oldest" if e.sort == "oldest" else "newest" }} first</td>
             <td>
               <code class="embed-snippet">{{ base_url }}/embed/{{ e.token }}</code>
-              <button type="button" class="secondary-btn copy-btn" data-url="{{ base_url }}/embed/{{ e.token }}">Copy iframe code</button>
+              <button type="button" class="secondary-btn copy-btn" data-url="{{ base_url }}/embed/{{ e.token }}?embedded=1">Copy iframe code</button>
             </td>
             <td>
               <a href="/embeds?edit={{ e.token }}" class="edit-link">Edit</a>
@@ -627,9 +627,31 @@ _TEMPLATES = {
     .embed-date { color: var(--asu-maroon); font-weight: 700; font-size: 0.9rem; margin-bottom: 0.15rem; }
     .embed-list a { color: var(--text-primary); font-weight: 600; text-decoration: none; font-size: 0.95rem; }
     .embed-list a:hover { color: var(--asu-maroon); }
+    /* Only applied when this page is opened directly (not inside a real embed iframe) --
+       see _looks_embedded() in app.py. The default rules above stay untouched so an
+       actual department-site embed never changes. */
+    body.standalone {
+      max-width: 640px; margin: 2.5rem auto; padding: 1.5rem 1.75rem;
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: 16px; box-shadow: 0 25px 60px -30px rgba(140, 29, 64, 0.35);
+    }
+    .embed-standalone-header {
+      display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;
+      padding-bottom: 0.75rem; border-bottom: 1px solid var(--border);
+      color: var(--asu-maroon); font-weight: 700; font-size: 0.85rem;
+    }
+    @media (max-width: 700px) {
+      body.standalone { margin: 0; border-radius: 0; }
+    }
   </style>
 </head>
-<body>
+<body class="{{ 'standalone' if standalone else '' }}">
+  {% if standalone %}
+    <div class="embed-standalone-header">
+      <img src="/static/app-mark.png" alt="" aria-hidden="true" width="32" height="19">
+      <span>The 1885 Post &middot; public newsletter feed</span>
+    </div>
+  {% endif %}
   {% if newsletters %}
     <ul class="embed-list">
       {% for n in newsletters %}
@@ -691,6 +713,19 @@ def _is_super_admin(request: Request, email: str | None) -> bool:
     raw = getattr(request.scope["env"], "SUPER_ADMIN_EMAILS", "") or ""
     allowed = {addr.strip().lower() for addr in raw.split(",") if addr.strip()}
     return email.lower() in allowed
+
+
+def _looks_embedded(request: Request) -> bool:
+    """True if this request is genuinely loading /embed/{token} inside an iframe, as
+    opposed to someone opening that same URL directly in a browser tab. Two independent
+    signals, either sufficient: our own "Copy iframe code" snippet always appends
+    ?embedded=1 (deterministic, works regardless of browser), and modern browsers send
+    Sec-Fetch-Dest: iframe when fetching a document to place in an <iframe> (covers
+    embeds pasted before this flag existed). Only affects cosmetic standalone styling in
+    embed_list.html, never anything security-relevant."""
+    if request.query_params.get("embedded") == "1":
+        return True
+    return request.headers.get("sec-fetch-dest") == "iframe"
 
 
 async def _can_administer(request: Request, email: str, newsletter: storage.Newsletter) -> bool:
@@ -1099,7 +1134,13 @@ async def embed_list(request: Request, token: str):
     newsletters = await storage.list_newsletters(
         _db(request), sender=embed.sender_email, sort=embed.sort, limit=embed.result_limit
     )
-    return _render("embed_list.html", token=token, embed=embed, newsletters=newsletters)
+    return _render(
+        "embed_list.html",
+        token=token,
+        embed=embed,
+        newsletters=newsletters,
+        standalone=not _looks_embedded(request),
+    )
 
 
 @app.get("/embed/{token}/n/{slug}")
