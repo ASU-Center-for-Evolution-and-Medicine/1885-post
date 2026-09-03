@@ -1,70 +1,51 @@
+<img src="assets/the-1885-post-mark-web.png" alt="The 1885 Post logo" width="180">
+
 # The 1885 Post
 
-The 1885 Post turns an incoming newsletter email into a permanent, linkable archive page.
-It is deployed as a single Cloudflare Python Worker: Cloudflare Email Routing triggers
-ingestion directly (no separate relay), D1 stores archived newsletters, and the same
-Worker serves the archive pages.
+**A university-wide, permanent archive for ASU newsletters.** Send a newsletter to one
+address and it shows up automatically, forever, at a linkable URL -- no more digging
+through inboxes or losing old issues when a mailing platform's account lapses.
 
-**Live:** https://newsletters.evmed.app (Cloudflare Access-gated -- see [USAGE.md](USAGE.md)
-for how colleagues use it). The Worker is also reachable directly at
-https://newsletter-archive.suhail-ghafoor8737.workers.dev, which Access does not protect;
-the app's own identity check (`access.py`) fails closed there instead, except for the
-intentionally-public `/embed/*` routes. Deployed under Cloudflare account
-`3ed0332b4053248f9a25eedf3c741b54` (`Suhail.ghafoor@asu.edu's Account`).
+![The 1885 Post homepage -- a grid of sender cards, each with a thumbnail, newsletter count, and latest date](assets/screenshot-homepage.jpg)
 
-This README is for developing/deploying the code. For how colleagues actually use the
-archive (getting a newsletter in, embedding a widget on a department site, requesting
-admin access), see [USAGE.md](USAGE.md).
+## What it does
 
-## Architecture
+- **Zero-effort ingestion.** Send (or CC/BCC) a newsletter to a single address and it's
+  live on the site within moments -- no upload, no manual step.
+- **A homepage organized by sender**, each with a thumbnail, a running newsletter
+  count, and a link to every past issue from that sender.
+- **A full, searchable archive** -- filter by sender, sort oldest/newest, paginated.
+- **Permanent links and print-ready pages** for every newsletter, including a
+  one-click "Print / Save as PDF" view and preview cards when a link is shared in
+  Slack, iMessage, etc.
+- **Content that survives the original sender.** Click-tracking links are resolved to
+  their real destination and external images are mirrored into permanent storage, so
+  an archived newsletter still renders correctly even after the sending platform
+  deletes or expires the originals. Unsubscribe links are neutralized so the public
+  archive can never be used to unsubscribe someone.
+- **Embeddable widgets** -- publish a "recent newsletters" iframe for any sender (or
+  all of them) on a department website in a couple of clicks.
+- **Granular permissions** -- per-sender admin grants let specific people manage
+  specific senders' newsletters, without needing full admin access to the whole site.
+- **Sender quarantine.** Only `*.asu.edu` senders (any subdomain) show up by default;
+  anything else is held in a review queue instead of the public site until a super
+  admin whitelists it -- nothing is ever silently rejected or dropped, so mail
+  delivery stays diagnosable.
 
-- `src/newsletter_archive/parser.py`, `sanitizer.py`, `slug.py` — pure logic, no I/O:
-  MIME parsing (stdlib `email`), unsubscribe/preferences link neutralization
-  (BeautifulSoup + `html.parser`), permalink slug generation. Shared by both paths below.
-- `src/newsletter_archive/access.py` — resolves the caller's Cloudflare Access identity
-  server-side, via an internal `/cdn-cgi/access/get-identity` subrequest that forwards
-  the incoming `Cookie` header (not a client-supplied header, so it can't be forged).
-  Fails closed to "no identity" if there's no valid Access session.
-- `src/newsletter_archive/web/app.py` — the FastAPI app, served inside the Worker via
-  its built-in ASGI adapter. Routes: `/` (list + date/sender/subject filters), `/n/{slug}`
-  (permalink page), `/n/{slug}/images/{content_id}`, `/n/{slug}/reprocess` (admin action:
-  re-runs the parse → sanitize → link-resolve pipeline against the stored `raw_eml`),
-  `/help` (in-app version of [USAGE.md](USAGE.md), any logged-in user), `POST /ingest`.
-  Authorization has two tiers: super admins (`SUPER_ADMIN_EMAILS` in `wrangler.jsonc`)
-  and per-sender admin grants (`/permissions`, super-admin only to create) that let a
-  user delete/backdate/reprocess newsletters from senders they administer and
-  edit/revoke anyone's embeds for those senders. Every logged-in user, regardless of
-  grants, can view all newsletters and create their own embeds for any sender.
-- `/permissions` lists every grant (read-only for everyone but the super admin, who can
-  add/revoke there) and `/embeds` lets any authenticated user publish a token-scoped,
-  unauthenticated "recent newsletters" query (`/embed/{token}`, `/embed/{token}/n/{slug}`)
-  for embedding as an iframe on a department site; both are linked from the header for
-  every logged-in user. `GET /admin` is kept only as a redirect to `/permissions` for
-  old bookmarks. The `/embed/*` routes deliberately skip the Access identity check and
-  sit behind an Access Bypass policy scoped to `/embed/*` in the dashboard -- the
-  unguessable token, re-validated against the newsletter's sender on every request, is
-  the actual security boundary, not Access.
-- `src/newsletter_archive/storage_d1.py` — async, D1-backed storage used by the deployed
-  routes and the email handler. Tables: `newsletters` + `images` (core archive),
-  `admin_grants` (per-sender admin), `embed_queries` (public embeds), `resolved_links`
-  (see below).
-- `src/worker_entry.py` — the Worker entrypoint: `fetch` hands off to the FastAPI app;
-  `email` (Cloudflare Email Routing's inbound trigger) reads the raw MIME and calls
-  `ingest_via_d1()`, which runs the same parse → resolve-links → sanitize → slug → store
-  pipeline. Tracked/redirect links (e.g. Mailchimp click-tracking) are followed to their
-  real destination before sanitizing, since a tracked href reveals nothing about where it
-  actually goes. Workers cap total subrequests per invocation, so resolution is
-  concurrency-throttled and capped per run; results are cached in the `resolved_links`
-  table so a repeat run (or a manual Reprocess) picks up newly-resolved links
-  incrementally instead of re-spending budget on ones already solved.
-- `src/newsletter_archive/storage.py` + `ingest.py` + the CLI (`python -m
-  newsletter_archive.ingest`) — a separate, sync/sqlite3 path used only by the pytest
-  suite as a fast, wrangler-free way to test the shared parsing/sanitizing logic. Not
-  part of the deployed Worker.
+## How it works
 
-Everything under `src/` is what the Worker bundler walks and deploys; `tests/`,
-`migrations/`, and local venvs deliberately live outside it (see the bundle-size note
-below for why that boundary matters).
+The whole thing is a single Cloudflare Python Worker. Cloudflare Email Routing
+delivers incoming mail directly to the Worker (no separate relay); that same Worker
+parses and sanitizes the email, stores it in D1 (Cloudflare's SQL database), mirrors
+images into R2 (object storage), and serves every page of the site, including the
+public embeds.
+
+The deployed instance is Cloudflare Access-gated for ASU colleagues -- see
+[USAGE.md](USAGE.md) for how colleagues use it.
+
+The rest of this README is for developing/deploying the code. See
+[ARCHITECTURE.md](ARCHITECTURE.md) for how the code is organized and how requests flow
+through it.
 
 ## Local development
 
@@ -91,9 +72,9 @@ curl -X POST "http://localhost:8787/ingest?to=newsletter-archive@example.com" \
   -H "Content-Type: message/rfc822"
 ```
 
-then open the printed `/n/{slug}` URL, or `http://localhost:8787/` for the list/filter
-view -- this write is real and immediately visible at the production URL too. Re-posting
-the same email (same `Message-ID`) is a no-op — it returns the existing entry instead of
+then open the printed `/n/{slug}` URL, or `http://localhost:8787/` for the homepage --
+this write is real and immediately visible at the production URL too. Re-posting the
+same email (same `Message-ID`) is a no-op — it returns the existing entry instead of
 erroring, since Email Routing retries and other push sources can redeliver.
 
 Set `NEWSLETTER_ARCHIVE_INGEST_TOKEN` (checked against an `X-Ingest-Token` header on
@@ -116,41 +97,13 @@ route an inbound address to this Worker. See `wrangler email routing --help`.
 Only unsubscribe / manage-preferences / email-preferences links (matched by anchor text
 and known href patterns, see `sanitizer.py`) get their `href` attribute removed entirely
 -- not set to `#`, which is still a real (if inert-looking) navigation target. Every
-other link and all other content is left exactly as it was in the original email, except
-that tracked/redirect links (e.g. click-tracking wrappers) are rewritten to the real
+other link's destination is left exactly as it was in the original email, except that
+tracked/redirect links (e.g. click-tracking wrappers) are rewritten to the real
 destination URL they resolve to (see `worker_entry.py`) -- the visible link text is
-unchanged, only where it actually goes. Inline (`cid:`) images are extracted and
-re-served from the archive so permalinks don't show broken images; externally-hosted
-images are left untouched.
-
-## Notes on the Python Workers port
-
-Python Workers are still in **open beta**. A few things worth knowing if you're
-modifying this:
-
-- FastAPI runs via a built-in ASGI adapter (`import asgi; await asgi.fetch(app,
-  request.js_object, self.env)`), not Uvicorn — there's no persistent server process.
-- Jinja2 templates are in-memory strings (`jinja2.Environment(loader=jinja2.DictLoader(...))`
-  in `web/app.py`) rather than `Jinja2Templates(directory=...)` — this mirrors
-  Cloudflare's own FastAPI example, which uses the same in-memory pattern rather than
-  file-based template loading under the bundled Pyodide filesystem.
-- D1 access is async and binding-based: `await env.DB.prepare(sql).bind(...).run()` /
-  `.first()` / `.all()` (see `storage_d1.py`), not the `sqlite3` module.
-- `message.raw` (in the `email` handler) is a JS `ReadableStream` with no Python
-  `.bytes()` wrapper; it's read via `(await js.Response.new(message.raw).arrayBuffer()).to_bytes()`,
-  the same technique the `workers` SDK uses internally for reading response bodies.
-- **Bundle size / project layout matters a lot.** The Python bundler walks the entry
-  file's directory for modules to vendor (no tree-shaking, and neither `.gitignore` nor
-  `.wranglerignore` is consulted). With everything at the project root, local venvs
-  (`.venv`, `.venv-workers`, and its nested `pyodide-venv`) and a project-local
-  `node_modules/` all got swept into the deploy bundle -- 8.7MB gzip, which failed
-  outright on this account's free-tier 3MB limit (`wrangler deploy --dry-run` computes
-  the real size but does *not* check the account's plan-tier limit, so this only surfaced
-  on a real `deploy`, not the dry run). Moving the entry point and package under `src/`
-  (matching Cloudflare's own examples) and keeping `wrangler` a global npm install
-  dropped it to **2.4MB gzip** by excluding everything outside `src/` from the walk.
-  If this ever creeps back up: check `wrangler deploy` output for "largest dependencies"
-  first, don't assume `--dry-run` alone proves a deploy will succeed.
-- `wrangler.jsonc` pins `account_id` explicitly (`3ed0332b4053248f9a25eedf3c741b54`,
-  `Suhail.ghafoor@asu.edu's Account`) since this Cloudflare login has access to multiple
-  accounts and `wrangler`/`pywrangler` would otherwise need `--account-id` on every call.
+unchanged, only where it actually goes. Every remaining link's `target`/`rel` is
+normalized to always open in a new tab (`force_links_new_tab` in `sanitizer.py`), since
+the newsletter body renders inside a sandboxed iframe and a link without that would
+either silently fail to open or navigate the iframe in place. Inline (`cid:`) images
+are extracted and re-served from the archive so permalinks don't show broken images;
+externally-hosted images are downloaded once and mirrored into R2 so the archive
+doesn't depend on the original host staying up.
