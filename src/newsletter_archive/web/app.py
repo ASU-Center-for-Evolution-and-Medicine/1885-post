@@ -12,6 +12,7 @@ under the bundled Pyodide filesystem.
 from __future__ import annotations
 
 import base64
+import math
 import secrets
 from datetime import datetime, timezone
 from email.utils import parseaddr
@@ -39,6 +40,26 @@ def _env_var(request: Request, name: str) -> str | None:
 
 _PAGE_SIZE = 25
 
+
+def _pagination_items(page: int, total_pages: int, radius: int = 2) -> list[int | None]:
+    """Page numbers to render as buttons, with None marking an ellipsis gap. Always
+    includes page 1 and the last page so far-away jumps stay reachable as the archive
+    grows well past a handful of pages."""
+    if total_pages <= 1:
+        return [1]
+    pages = {1, total_pages}
+    for p in range(max(1, page - radius), min(total_pages, page + radius) + 1):
+        pages.add(p)
+    items: list[int | None] = []
+    prev = None
+    for p in sorted(pages):
+        if prev is not None and p - prev > 1:
+            items.append(None)
+        items.append(p)
+        prev = p
+    return items
+
+
 _CSS = """
 :root {
   --asu-maroon: #8c1d40;
@@ -61,6 +82,8 @@ body {
   background: var(--background);
   color: var(--text-primary);
 }
+
+a { color: var(--asu-maroon); text-decoration: none; }
 
 .site-header {
   border-bottom: 1px solid var(--border);
@@ -88,7 +111,7 @@ body {
   transition: color 0.15s ease, border-color 0.15s ease;
 }
 .nav-link:hover { color: var(--asu-maroon); border-bottom-color: var(--asu-maroon); }
-.identity { text-align: right; font-size: 0.85rem; line-height: 1.35; }
+.identity { text-align: right; font-size: 0.85rem; line-height: 1.35; padding-left: 1rem; border-left: 1px solid var(--border); }
 .identity-name { color: var(--text-primary); font-weight: 600; }
 .identity-email { color: var(--text-muted); }
 
@@ -149,7 +172,7 @@ main > h1 {
   .site-mark { width: 72px; height: 44px; }
   .site-subtitle { max-width: none; }
   .header-right { width: 100%; flex-wrap: wrap; gap: 0.5rem; }
-  .identity { flex: 1 0 100%; margin-left: 0; text-align: left; overflow-wrap: anywhere; }
+  .identity { flex: 1 0 100%; margin-left: 0; text-align: left; overflow-wrap: anywhere; padding-left: 0; border-left: none; }
   .layout { flex-direction: column; }
   .sidebar { width: 100%; }
   .content { width: 100%; }
@@ -161,6 +184,7 @@ main > h1 {
 .newsletter-list a.subject { color: var(--text-primary); font-weight: 600; text-decoration: none; }
 .newsletter-list a.subject:hover { color: var(--asu-maroon); }
 
+.thumb-link { display: block; flex: 0 0 auto; }
 .thumb { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; flex: 0 0 auto; }
 .thumb-placeholder {
   width: 56px; height: 56px; border-radius: 8px; flex: 0 0 auto;
@@ -203,17 +227,25 @@ img.sender-card-thumb { filter: brightness(0.65); }
 .sender-card-meta { font-size: 0.82rem; color: var(--text-muted); }
 
 .view-all-card {
-  flex-direction: row; align-items: center; justify-content: center; gap: 0.6rem;
+  flex-direction: column; align-items: center; justify-content: center; gap: 0.4rem;
   min-height: 210px; background: var(--asu-maroon); border: none; color: #fff;
-  font-weight: 800; font-size: 1.3rem; letter-spacing: 0.02em;
 }
+.view-all-main { display: flex; align-items: center; gap: 0.6rem; font-weight: 800; font-size: 1.3rem; letter-spacing: 0.02em; }
+.view-all-stats { font-size: 0.8rem; font-weight: 500; color: rgba(255, 255, 255, 0.8); }
 .view-all-card:hover { background: var(--asu-black); }
 
 .meta { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.2rem; }
 
-.pagination { display: flex; justify-content: space-between; margin-top: 1.5rem; }
-.pagination a { color: var(--asu-maroon); font-weight: 600; text-decoration: none; }
-.pagination a:hover { text-decoration: underline; }
+.pagination { display: flex; align-items: center; gap: 0.4rem; margin-top: 1.5rem; flex-wrap: wrap; }
+.page-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 2.2rem; height: 2.2rem; padding: 0 0.7rem;
+  border: 1px solid var(--asu-maroon); border-radius: 6px;
+  color: var(--asu-maroon); font-weight: 600; font-size: 0.85rem; text-decoration: none;
+}
+a.page-btn:hover { background: var(--asu-maroon); color: #fff; text-decoration: none; }
+.page-btn.active { background: var(--asu-maroon); color: #fff; }
+.page-ellipsis { color: var(--text-muted); padding: 0 0.2rem; }
 
 .delete-form { display: inline-block; margin: 0; padding: 0; }
 .delete-btn {
@@ -287,7 +319,7 @@ img.sender-card-thumb { filter: brightness(0.65); }
 .print-btn { display: inline-flex; align-items: center; gap: 0.4rem; flex: 0 0 auto; white-space: nowrap; }
 .print-btn svg { display: block; }
 
-#body-frame { width: 100%; border: 0; display: block; min-height: 400px; }
+#body-frame { width: 100%; border: 0; display: block; min-height: 1400px; }
 .empty { color: var(--text-muted); padding: 2rem 0; }
 
 /* Print / "Save as PDF": clicking .print-btn calls window.print(), and this is what
@@ -315,8 +347,12 @@ img.sender-card-thumb { filter: brightness(0.65); }
 .app-footer a { color: rgba(140, 29, 64, 0.85); font-weight: 600; text-decoration: none; }
 .app-footer a:hover { text-decoration: underline; }
 .app-footer__logo { display: block; height: 60px; width: auto; border-radius: 4px; flex: 0 0 auto; }
-
-.collection-stats { color: var(--text-muted); font-size: 0.9rem; margin: -0.25rem 0 1rem; }
+.app-footer a.app-footer__help {
+  flex: 0 0 auto; color: #fff; background: var(--asu-maroon);
+  font-weight: 700; font-size: 0.75rem; padding: 0.4rem 1rem;
+  border-radius: 999px; text-decoration: none; white-space: nowrap;
+}
+.app-footer a.app-footer__help:hover { background: var(--asu-black); color: #fff; text-decoration: none; }
 """
 
 _TEMPLATES = {
@@ -346,6 +382,8 @@ _TEMPLATES = {
             <a class="nav-link" href="/archive">Archive</a>
             <a class="nav-link" href="/embeds">Embeds</a>
             <a class="nav-link" href="/permissions">Permissions</a>
+            {% if is_super_admin %}<a class="nav-link" href="/quarantine">Quarantine</a>{% endif %}
+            {% if is_super_admin %}<a class="nav-link" href="/deleted">Deleted</a>{% endif %}
           </nav>
         {% elif embed_back_url %}
           <a class="nav-link" href="{{ embed_back_url }}">{{ embed_back_label }}</a>
@@ -368,8 +406,8 @@ _TEMPLATES = {
     <a href="https://evmed.asu.edu"><img src="/static/logo.png" alt="Center for Evolution and Medicine logo" class="app-footer__logo" width="220" height="55"></a>
     <div class="app-footer__text">
       <p>Made by the <a href="https://evmed.asu.edu/">Center for Evolution and Medicine</a> at <a href="https://asu.edu">Arizona State University</a>.</p>
-      <p><a href="/help">Help</a></p>
     </div>
+    <a href="/help" class="app-footer__help">Help</a>
   </footer>
 </body>
 </html>
@@ -378,10 +416,6 @@ _TEMPLATES = {
 {% block title %}The 1885 Post{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
-  <h1>Newsletters by sender</h1>
-  {% if total_newsletters %}
-    <p class="collection-stats">{{ total_newsletters }} newsletter{{ "s" if total_newsletters != 1 }} archived from {{ total_senders }} sender{{ "s" if total_senders != 1 }}</p>
-  {% endif %}
   {% if senders %}
     <div class="sender-grid">
       {% for s in senders %}
@@ -401,11 +435,14 @@ _TEMPLATES = {
         </a>
       {% endfor %}
       <a class="sender-card view-all-card" href="/archive">
-        <span class="view-all-text">View all</span>
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <line x1="3" y1="10" x2="15" y2="10" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
-          <polyline points="9 4 15 10 9 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"></polyline>
-        </svg>
+        <div class="view-all-main">
+          <span class="view-all-text">View all</span>
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <line x1="3" y1="10" x2="15" y2="10" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+            <polyline points="9 4 15 10 9 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"></polyline>
+          </svg>
+        </div>
+        <span class="view-all-stats">{{ total_newsletters }} newsletter{{ "s" if total_newsletters != 1 }} &middot; {{ total_senders }} sender{{ "s" if total_senders != 1 }}</span>
       </a>
     </div>
   {% else %}
@@ -441,18 +478,20 @@ _TEMPLATES = {
         <ul class="newsletter-list">
           {% for n in newsletters %}
             <li>
-              {% if n.thumbnail_key %}
-                <img class="thumb" src="/static/newsletters/{{ n.slug }}/{{ n.thumbnail_key }}" alt="">
-              {% else %}
-                <div class="thumb-placeholder">{{ (n.from_address or "?")[0]|upper }}</div>
-              {% endif %}
+              <a class="thumb-link" href="/n/{{ n.slug }}">
+                {% if n.thumbnail_key %}
+                  <img class="thumb" src="/static/newsletters/{{ n.slug }}/{{ n.thumbnail_key }}" alt="">
+                {% else %}
+                  <div class="thumb-placeholder">{{ (n.from_address or "?")[0]|upper }}</div>
+                {% endif %}
+              </a>
               <div class="li-text">
                 <a class="subject" href="/n/{{ n.slug }}">{{ n.subject }}</a>
                 <div class="meta">
                   {{ n.from_address }} &middot; {{ (n.received_at or n.created_at)|humandate }}
                   {% if is_super_admin or n.from_email in admin_senders %}
                     &middot;
-                    <form class="delete-form" method="post" action="/n/{{ n.slug }}/delete" onsubmit="return confirm('Delete this newsletter?');">
+                    <form class="delete-form" method="post" action="/n/{{ n.slug }}/delete" onsubmit="return confirm('Delete this newsletter? (can be restored from the Deleted page)');">
                       <button type="submit" class="delete-btn">Delete</button>
                     </form>
                   {% endif %}
@@ -467,10 +506,19 @@ _TEMPLATES = {
 
       <div class="pagination">
         {% if page > 1 %}
-          <a href="?sender={{ filters.sender }}&sort={{ filters.sort }}&page={{ page - 1 }}">&larr; Newer</a>
-        {% else %}<span></span>{% endif %}
+          <a class="page-btn" href="?sender={{ filters.sender }}&sort={{ filters.sort }}&page={{ page - 1 }}">&larr; Newer</a>
+        {% endif %}
+        {% for item in pagination_items %}
+          {% if item is none %}
+            <span class="page-ellipsis">&hellip;</span>
+          {% elif item == page %}
+            <span class="page-btn active">{{ item }}</span>
+          {% else %}
+            <a class="page-btn" href="?sender={{ filters.sender }}&sort={{ filters.sort }}&page={{ item }}">{{ item }}</a>
+          {% endif %}
+        {% endfor %}
         {% if has_next %}
-          <a href="?sender={{ filters.sender }}&sort={{ filters.sort }}&page={{ page + 1 }}">Older &rarr;</a>
+          <a class="page-btn" href="?sender={{ filters.sender }}&sort={{ filters.sort }}&page={{ page + 1 }}">Older &rarr;</a>
         {% endif %}
       </div>
     </div>
@@ -513,7 +561,7 @@ _TEMPLATES = {
       </div>
 
       {% if newsletter.sanitized_html %}
-        <iframe id="body-frame" sandbox="allow-same-origin" srcdoc="{{ newsletter.sanitized_html }}"></iframe>
+        <iframe id="body-frame" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcdoc="{{ newsletter.sanitized_html }}"></iframe>
         <script>
       const frame = document.getElementById("body-frame");
 
@@ -605,7 +653,7 @@ _TEMPLATES = {
           <form class="secondary-form" method="post" action="/n/{{ newsletter.slug }}/reprocess" title="Re-run link resolution and unsubscribe-link cleanup against the original email">
             <button type="submit" class="secondary-btn">Reprocess links</button>
           </form>
-          <form class="delete-form" method="post" action="/n/{{ newsletter.slug }}/delete" onsubmit="return confirm('Delete this newsletter?');">
+          <form class="delete-form" method="post" action="/n/{{ newsletter.slug }}/delete" onsubmit="return confirm('Delete this newsletter? (can be restored from the Deleted page)');">
             <button type="submit" class="delete-btn">Delete this newsletter</button>
           </form>
         </div>
@@ -618,44 +666,48 @@ _TEMPLATES = {
 {% block title %}Help · The 1885 Post{% endblock %}
 {% block content %}
   <h1>Help</h1>
-  <p class="meta">Questions or issues? Contact <a href="mailto:suhail.ghafoor@asu.edu">suhail.ghafoor@asu.edu</a>.</p>
 
-  <h2>Get your newsletter into the archive</h2>
+  <h2>What this is</h2>
+  <p class="meta">The 1885 Post is a university-wide archive for ASU newsletters -- one
+  permanent, linkable home for every department's newsletter, instead of each issue
+  living only in inboxes and disappearing after it's sent.</p>
+
+  <h2>How to use it</h2>
   <p class="meta">Send (or CC/BCC) your newsletter to <strong>newsletters@evmed.app</strong>
-  when you send it out. It shows up on the <a href="/">homepage</a> automatically within
-  moments -- no extra steps. Unsubscribe / manage-preferences links are automatically
-  disabled in the archived copy (so the public archive can't be used to unsubscribe
-  someone); everything else, including all your regular content links, is preserved
-  exactly as sent.</p>
+  when you send it out -- it appears on the <a href="/">homepage</a> automatically, no
+  extra steps.</p>
+  <p class="meta">To show a "recent newsletters" widget on your department's website, go
+  to <a href="/embeds">Embeds</a>, fill in a name and the sender to show, then click
+  <strong>Create embed</strong> and paste the copied code into your site. Any logged-in
+  user can create one, no admin access needed.</p>
+  <p class="meta"><strong>Permissions:</strong> admin access is per sending address -- it
+  lets you delete, backdate, and manage embeds for newsletters from that sender, even
+  ones you didn't create yourself. It's not needed just to create your own embeds. See
+  <a href="/permissions">Permissions</a> for who currently administers which sender.</p>
 
-  <h2>Add a "recent newsletters" widget to your department website</h2>
-  <p class="meta">Any of the newsletters in the archive can be embedded as a small,
-  public widget on another website -- no login required for people viewing it, and
-  clicking a newsletter opens the full thing. Any logged-in archive user can create one,
-  no admin access needed:</p>
-  <ol class="meta">
-    <li>Go to <a href="/embeds">Embeds</a> (linked at the top of every page).</li>
-    <li>Fill in a name, a sender email to filter to (leave blank to show newsletters
-    from <em>all</em> senders), how many to show (0 shows all of them), and sort order,
-    then <strong>Create embed</strong>.</li>
-    <li>Click <strong>Copy iframe code</strong> next to it and paste that directly into
-    your website's HTML.</li>
-  </ol>
-  <p class="meta">You can revisit <a href="/embeds">Embeds</a> any time to
-  <strong>Edit</strong> an embed you created (updates what it shows without breaking the
-  link you already pasted somewhere) or <strong>Revoke</strong> it (immediately stops it
-  from working anywhere it's embedded). Editing or revoking an embed someone else
-  created requires admin access for that embed's sender.</p>
+  <h2>What happens behind the scenes</h2>
+  <p class="meta">A few things happen automatically when a newsletter is archived, so
+  the copy you see months or years later still works the way it did on day one:</p>
+  <p class="meta"><strong>Links get updated.</strong> Newsletter platforms (Mailchimp,
+  Constant Contact, etc.) often wrap every link in a click-tracking redirect -- the
+  archive follows those once and stores the real destination instead, so archived links
+  keep working even after the original campaign's tracking expires. Unsubscribe /
+  manage-preferences links are neutralized for the same reason in reverse: so the public
+  archive can never be used to unsubscribe someone.</p>
+  <p class="meta"><strong>Images are copied, not just linked.</strong> Externally-hosted
+  images are downloaded once and stored permanently as part of the archive, rather than
+  left pointing at wherever they originally lived -- so the newsletter still renders
+  correctly even if the sending platform later deletes or expires them.</p>
+  <p class="meta"><strong>Only ASU senders show up by default.</strong> A newsletter
+  from any <code>*.asu.edu</code> address appears immediately. Anything from another
+  domain is held in a quarantine -- invisible on the homepage, the archive, and every
+  embed -- until a super admin whitelists that sender's address; nothing is ever
+  silently rejected or dropped. If your department sends through a third-party platform
+  under a different domain, contact Suhail to get that address whitelisted.</p>
 
-  <h2>Don't have admin access yet?</h2>
-  <p class="meta">Admin access is per sending address -- it lets you delete newsletters
-  from that sender in the archive, backdate them (useful for backfilling old issues),
-  and edit/revoke embeds scoped to that sender even if you did not create them. It is
-  not needed just to create your own embeds. See <a href="/permissions">Permissions</a>
-  for who currently administers which sender.</p>
-  <p class="meta">Contact Suhail
-  (<a href="mailto:suhail.ghafoor@asu.edu">suhail.ghafoor@asu.edu</a>) to be set up as an
-  admin for your sending address.</p>
+  <h2>Contact</h2>
+  <p class="meta">Questions, need admin access, or have a feature request? Contact Suhail
+  (<a href="mailto:suhail.ghafoor@asu.edu">suhail.ghafoor@asu.edu</a>).</p>
 {% endblock %}
 """,
     "permissions.html": """{% extends "base.html" %}
@@ -698,6 +750,107 @@ _TEMPLATES = {
     </table>
   {% else %}
     <p class="empty">No admin grants yet.</p>
+  {% endif %}
+{% endblock %}
+""",
+    "quarantine.html": """{% extends "base.html" %}
+{% block title %}Quarantine · The 1885 Post{% endblock %}
+{% block content %}
+  <h1>Quarantine</h1>
+
+  <p class="meta">Newsletters from senders outside *.asu.edu land here instead of the
+  homepage, archive, or any embed (including "all senders" embeds) -- nothing is
+  rejected or silently dropped, so anything that comes in stays visible either here or
+  in the normal archive.</p>
+
+  {% if quarantined %}
+    <table class="admin-table">
+      <thead><tr><th>Subject</th><th>From</th><th>Received</th><th></th></tr></thead>
+      <tbody>
+        {% for n in quarantined %}
+          <tr>
+            <td><a href="/n/{{ n.slug }}">{{ n.subject }}</a></td>
+            <td>{{ n.from_address }}</td>
+            <td>{{ (n.received_at or n.created_at)|humandate }}</td>
+            <td>
+              <form class="delete-form" method="post" action="/quarantine/{{ n.slug }}/release">
+                <button type="submit" class="secondary-btn">Release</button>
+              </form>
+              <form class="delete-form" method="post" action="/quarantine/{{ n.slug }}/whitelist" onsubmit="return confirm('Whitelist this sender and release all their quarantined newsletters?');">
+                <button type="submit" class="secondary-btn">Whitelist sender</button>
+              </form>
+              <form class="delete-form" method="post" action="/n/{{ n.slug }}/delete" onsubmit="return confirm('Delete this newsletter? (can be restored from the Deleted page)');">
+                <button type="submit" class="delete-btn">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="empty">Nothing in quarantine.</p>
+  {% endif %}
+
+  <h2>Sender allowlist</h2>
+  <p class="meta">Non-ASU addresses here skip quarantine entirely, for both past and
+  future newsletters.</p>
+  <form class="admin-form" method="post" action="/quarantine/allowlist">
+    <input type="email" name="email" placeholder="vendor@example.com" required>
+    <button type="submit">Allow</button>
+  </form>
+
+  {% if allowlist %}
+    <table class="admin-table">
+      <thead><tr><th>Email</th><th>Added</th><th></th></tr></thead>
+      <tbody>
+        {% for a in allowlist %}
+          <tr>
+            <td>{{ a.email }}</td>
+            <td>{{ a.created_at|humandate }}</td>
+            <td>
+              <form class="delete-form" method="post" action="/quarantine/allowlist/{{ a.id }}/delete" onsubmit="return confirm('Remove from allowlist?');">
+                <button type="submit" class="delete-btn">Remove</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="empty">No allowlisted senders yet.</p>
+  {% endif %}
+{% endblock %}
+""",
+    "deleted.html": """{% extends "base.html" %}
+{% block title %}Deleted · The 1885 Post{% endblock %}
+{% block content %}
+  <h1>Deleted</h1>
+
+  <p class="meta">Deleting a newsletter never actually erases it -- it's just hidden
+  from the homepage, archive, and every embed, with a record of who deleted it and
+  when. Restore anything below to bring it back exactly as it was.</p>
+
+  {% if deleted %}
+    <table class="admin-table">
+      <thead><tr><th>Subject</th><th>From</th><th>Deleted by</th><th>Deleted</th><th></th></tr></thead>
+      <tbody>
+        {% for n in deleted %}
+          <tr>
+            <td><a href="/n/{{ n.slug }}">{{ n.subject }}</a></td>
+            <td>{{ n.from_address }}</td>
+            <td>{{ n.deleted_by }}</td>
+            <td>{{ n.deleted_at|humandate }}</td>
+            <td>
+              <form class="delete-form" method="post" action="/deleted/{{ n.slug }}/restore">
+                <button type="submit" class="secondary-btn">Restore</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="empty">Nothing deleted.</p>
   {% endif %}
 {% endblock %}
 """,
@@ -978,8 +1131,6 @@ async def home_sender_cards(request: Request):
         return _render(
             "home.html",
             senders=[],
-            total_newsletters=0,
-            total_senders=0,
             identity_display=None,
             identity_email=None,
             is_super_admin=False,
@@ -1008,7 +1159,6 @@ async def view_archive(
     the homepage became the sender-card grid (home_sender_cards above)."""
     page = max(page, 1)
     sort = "oldest" if sort == "oldest" else "newest"
-    offset = (page - 1) * _PAGE_SIZE
     email, identity_display = await _current_user(request)
     if not email:
         return _render(
@@ -1016,7 +1166,9 @@ async def view_archive(
             newsletters=[],
             senders=[],
             filters={"sender": sender or "", "sort": sort},
-            page=page,
+            page=1,
+            total_pages=1,
+            pagination_items=[1],
             has_next=False,
             identity_display=None,
             identity_email=None,
@@ -1024,23 +1176,29 @@ async def view_archive(
             is_super_admin=False,
         )
 
+    total = await storage.count_newsletters(_db(request), sender=sender)
+    total_pages = max(1, math.ceil(total / _PAGE_SIZE))
+    page = min(page, total_pages)
+    offset = (page - 1) * _PAGE_SIZE
+
     rows = await storage.list_newsletters(
         _db(request),
         sender=sender,
         sort=sort,
-        limit=_PAGE_SIZE + 1,
+        limit=_PAGE_SIZE,
         offset=offset,
     )
-    has_next = len(rows) > _PAGE_SIZE
     senders = await storage.list_senders(_db(request))
     admin_senders = set(await storage.list_admin_senders(_db(request), email))
     return _render(
         "list.html",
-        newsletters=rows[:_PAGE_SIZE],
+        newsletters=rows,
         senders=senders,
         filters={"sender": sender or "", "sort": sort},
         page=page,
-        has_next=has_next,
+        total_pages=total_pages,
+        pagination_items=_pagination_items(page, total_pages),
+        has_next=page < total_pages,
         identity_display=identity_display,
         identity_email=email,
         admin_senders=admin_senders,
@@ -1058,6 +1216,10 @@ async def view_newsletter(request: Request, slug: str):
     if newsletter is None:
         raise HTTPException(status_code=404, detail="Newsletter not found")
 
+    is_super = _is_super_admin(request, email)
+    if (newsletter.quarantined_at or newsletter.deleted_at) and not is_super:
+        raise HTTPException(status_code=404, detail="Newsletter not found")
+
     admin_senders = await storage.list_admin_senders(_db(request), email)
     base_url = str(request.base_url).rstrip("/")
     return _render(
@@ -1066,7 +1228,7 @@ async def view_newsletter(request: Request, slug: str):
         identity_display=identity_display,
         identity_email=email,
         is_admin=newsletter.from_email in admin_senders,
-        is_super_admin=_is_super_admin(request, email),
+        is_super_admin=is_super,
         base_url=base_url,
         canonical_url=f"{base_url}/n/{slug}",
     )
@@ -1098,7 +1260,7 @@ async def delete_newsletter(request: Request, slug: str):
     if not await _can_administer(request, email, newsletter):
         raise HTTPException(status_code=403, detail="Not an admin for this newsletter's sender")
 
-    await storage.delete_newsletter(_db(request), slug)
+    await storage.delete_newsletter(_db(request), slug, deleted_by=email)
     return RedirectResponse(url="/archive", status_code=303)
 
 
@@ -1217,6 +1379,109 @@ async def delete_admin_grant(request: Request, grant_id: int):
     return RedirectResponse(url="/permissions", status_code=303)
 
 
+@app.get("/quarantine")
+async def quarantine_dashboard(request: Request):
+    """Super-admin only: newsletters from senders outside *.asu.edu (and not on the
+    allowlist) land here instead of the public archive/homepage/embeds. Nothing is
+    rejected or silently dropped at ingest -- everything ends up visible either here or
+    in the normal archive, so email-delivery problems stay diagnosable."""
+    email, identity_display = await _current_user(request)
+    if not email or not _is_super_admin(request, email):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    quarantined = await storage.list_quarantined(_db(request))
+    allowlist = await storage.list_allowlist(_db(request))
+    return _render(
+        "quarantine.html",
+        quarantined=quarantined,
+        allowlist=allowlist,
+        identity_display=identity_display,
+        identity_email=email,
+        is_super_admin=True,
+    )
+
+
+@app.post("/quarantine/{slug}/release")
+async def release_quarantined(request: Request, slug: str):
+    email, _identity_display = await _current_user(request)
+    if not email or not _is_super_admin(request, email):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    await storage.release_from_quarantine(_db(request), slug)
+    return RedirectResponse(url="/quarantine", status_code=303)
+
+
+@app.post("/quarantine/{slug}/whitelist")
+async def whitelist_from_quarantine(request: Request, slug: str):
+    """Whitelists this newsletter's sender and releases every quarantined newsletter
+    already sitting there from that same sender in one action."""
+    email, _identity_display = await _current_user(request)
+    if not email or not _is_super_admin(request, email):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    newsletter = await storage.get_by_slug(_db(request), slug)
+    if newsletter is None or not newsletter.from_email:
+        raise HTTPException(status_code=404, detail="Newsletter not found")
+
+    await storage.add_to_allowlist(_db(request), newsletter.from_email)
+    await storage.release_all_from_sender(_db(request), newsletter.from_email)
+    return RedirectResponse(url="/quarantine", status_code=303)
+
+
+@app.post("/quarantine/allowlist")
+async def add_allowlist_entry(request: Request):
+    """Manually pre-authorize a non-ASU sender before they've sent anything yet."""
+    email, _identity_display = await _current_user(request)
+    if not email or not _is_super_admin(request, email):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    form = await _parse_form(request)
+    allow_email = (form.get("email") or "").strip().lower()
+    if allow_email:
+        await storage.add_to_allowlist(_db(request), allow_email)
+        await storage.release_all_from_sender(_db(request), allow_email)
+    return RedirectResponse(url="/quarantine", status_code=303)
+
+
+@app.post("/quarantine/allowlist/{entry_id}/delete")
+async def delete_allowlist_entry(request: Request, entry_id: int):
+    email, _identity_display = await _current_user(request)
+    if not email or not _is_super_admin(request, email):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    await storage.remove_from_allowlist(_db(request), entry_id)
+    return RedirectResponse(url="/quarantine", status_code=303)
+
+
+@app.get("/deleted")
+async def deleted_dashboard(request: Request):
+    """Super-admin only: soft-deleted newsletters -- nothing is ever actually erased by
+    the delete action, just hidden and marked with who deleted it and when, so a mistake
+    (increasingly possible now that more people have delete rights) can be undone here."""
+    email, identity_display = await _current_user(request)
+    if not email or not _is_super_admin(request, email):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    deleted = await storage.list_deleted(_db(request))
+    return _render(
+        "deleted.html",
+        deleted=deleted,
+        identity_display=identity_display,
+        identity_email=email,
+        is_super_admin=True,
+    )
+
+
+@app.post("/deleted/{slug}/restore")
+async def restore_deleted(request: Request, slug: str):
+    email, _identity_display = await _current_user(request)
+    if not email or not _is_super_admin(request, email):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    await storage.restore_newsletter(_db(request), slug)
+    return RedirectResponse(url="/deleted", status_code=303)
+
+
 @app.post("/maintenance/backfill")
 async def maintenance_backfill(request: Request):
     """Bulk-runs the same pipeline as a newsletter's own "Reprocess links" (resolving
@@ -1234,6 +1499,25 @@ async def maintenance_backfill(request: Request):
     from worker_entry import backfill_batch
 
     return await backfill_batch(_db(request), _bucket(request))
+
+
+@app.post("/maintenance/reprocess/{slug}")
+async def maintenance_reprocess(request: Request, slug: str):
+    """Script-friendly single-newsletter twin of /maintenance/backfill -- re-runs the
+    parse/resolve/sanitize pipeline against one already-archived newsletter's stored
+    raw_eml, for testing a sanitizer change against one newsletter before running it
+    across everything. Same BACKFILL_MAINTENANCE_TOKEN gate, same reasoning: never
+    touches an Access session."""
+    token = _env_var(request, "BACKFILL_MAINTENANCE_TOKEN")
+    if not token or request.headers.get("X-Maintenance-Token") != token:
+        raise HTTPException(status_code=401, detail="Invalid or missing maintenance token")
+
+    from worker_entry import reprocess_via_d1
+
+    newsletter, fully_processed = await reprocess_via_d1(slug, _db(request), _bucket(request))
+    if newsletter is None:
+        raise HTTPException(status_code=404, detail="Newsletter not found")
+    return {"slug": newsletter.slug, "subject": newsletter.subject, "fully_processed": fully_processed}
 
 
 @app.get("/embeds")
@@ -1430,7 +1714,7 @@ async def embed_permalink(request: Request, token: str, slug: str):
         raise HTTPException(status_code=404, detail="Not found")
 
     newsletter = await storage.get_by_slug(_db(request), slug)
-    if newsletter is None:
+    if newsletter is None or newsletter.quarantined_at or newsletter.deleted_at:
         raise HTTPException(status_code=404, detail="Newsletter not found")
     if embed.sender_email and newsletter.from_email != embed.sender_email:
         raise HTTPException(status_code=404, detail="Newsletter not found")

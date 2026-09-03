@@ -79,6 +79,20 @@ def neutralize_unsubscribe_links(html: str) -> str:
     return str(soup)
 
 
+def force_links_new_tab(html: str) -> str:
+    """The newsletter body renders inside a sandboxed iframe (no allow-scripts); a link
+    with no target (or target="_self") navigates that iframe's own frame in place,
+    replacing the newsletter with the destination page instead of leaving the archive
+    page alone. Forcing target="_blank" on every remaining link (unsubscribe links have
+    already lost their href by the time this runs) makes every click consistently open
+    a new tab regardless of how the sending platform authored the link."""
+    soup = BeautifulSoup(html, "html.parser")
+    for anchor in soup.find_all("a", href=True):
+        anchor["target"] = "_blank"
+        anchor["rel"] = "noopener noreferrer"
+    return str(soup)
+
+
 def _is_tracked_link(href: str) -> bool:
     host = urlparse(href).hostname or ""
     return any(pattern.match(host) for pattern in TRACKED_LINK_DOMAINS)

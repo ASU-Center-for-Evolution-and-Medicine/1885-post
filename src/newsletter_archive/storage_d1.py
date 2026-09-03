@@ -15,7 +15,8 @@ from datetime import datetime, timezone
 from email.utils import parseaddr
 
 _LIST_COLUMNS = (
-    "id, message_id, from_address, from_email, to_address, subject, received_at, slug, created_at, thumbnail_key"
+    "id, message_id, from_address, from_email, to_address, subject, received_at, slug, created_at, "
+    "thumbnail_key, quarantined_at, deleted_at, deleted_by"
 )
 _DETAIL_COLUMNS = _LIST_COLUMNS + ", sanitized_html, plain_text_fallback"
 
@@ -32,6 +33,9 @@ class NewsletterSummary:
     slug: str
     created_at: str
     thumbnail_key: str | None = None
+    quarantined_at: str | None = None
+    deleted_at: str | None = None
+    deleted_by: str | None = None
 
 
 @dataclass
@@ -54,6 +58,7 @@ async def insert_newsletter(
     sanitized_html: str | None,
     plain_text_fallback: str | None,
     thumbnail_key: str | None = None,
+    quarantined_at: str | None = None,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     await (
@@ -61,8 +66,8 @@ async def insert_newsletter(
             """
             INSERT INTO newsletters
                 (message_id, from_address, from_email, to_address, subject, received_at, slug,
-                 raw_eml, sanitized_html, plain_text_fallback, thumbnail_key, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 raw_eml, sanitized_html, plain_text_fallback, thumbnail_key, quarantined_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(slug) DO NOTHING
             """
         )
@@ -78,6 +83,7 @@ async def insert_newsletter(
             sanitized_html,
             plain_text_fallback,
             thumbnail_key,
+            quarantined_at,
             now,
         )
         .run()
@@ -188,12 +194,17 @@ async def delete_admin_grant(db, grant_id: int) -> None:
     await db.prepare("DELETE FROM newsletter_admins WHERE id = ?").bind(grant_id).run()
 
 
-async def delete_newsletter(db, slug: str) -> bool:
-    newsletter_id = await get_id_by_slug(db, slug)
-    if newsletter_id is None:
-        return False
-    await db.prepare("DELETE FROM newsletter_images WHERE newsletter_id = ?").bind(newsletter_id).run()
-    await db.prepare("DELETE FROM newsletters WHERE id = ?").bind(newsletter_id).run()
+async def delete_newsletter(db, slug: str, deleted_by: str) -> bool:
+    """Soft-delete: marks the row instead of removing it (nothing, including its
+    images, is actually erased) so it can be reviewed/restored from /deleted."""
+    now = datetime.now(timezone.utc).isoformat()
+    await (
+        db.prepare(
+            "UPDATE newsletters SET deleted_at = ?, deleted_by = ? WHERE slug = ? AND deleted_at IS NULL"
+        )
+        .bind(now, deleted_by, slug)
+        .run()
+    )
     return True
 
 
@@ -214,7 +225,7 @@ class SenderSummary:
 async def list_senders(db) -> list[SenderSummary]:
     result = await db.prepare(
         "SELECT from_email, MAX(from_address) AS from_address, COUNT(*) AS count "
-        "FROM newsletters WHERE from_email IS NOT NULL "
+        "FROM newsletters WHERE from_email IS NOT NULL AND quarantined_at IS NULL AND deleted_at IS NULL "
         "GROUP BY from_email ORDER BY from_email"
     ).all()
     return [
@@ -227,6 +238,19 @@ async def list_senders(db) -> list[SenderSummary]:
     ]
 
 
+async def count_newsletters(db, *, sender: str | None = None) -> int:
+    where = "WHERE quarantined_at IS NULL AND deleted_at IS NULL"
+    params: list[str] = []
+    if sender:
+        where += " AND from_email = ?"
+        params.append(sender)
+    stmt = db.prepare(f"SELECT COUNT(*) AS n FROM newsletters {where}")
+    if params:
+        stmt = stmt.bind(*params)
+    row = await stmt.first()
+    return row["n"] if row else 0
+
+
 async def list_newsletters(
     db,
     *,
@@ -235,10 +259,10 @@ async def list_newsletters(
     limit: int = 50,
     offset: int = 0,
 ) -> list[NewsletterSummary]:
-    where = ""
+    where = "WHERE quarantined_at IS NULL AND deleted_at IS NULL"
     params: list[str] = []
     if sender:
-        where = "WHERE from_email = ?"
+        where += " AND from_email = ?"
         params.append(sender)
     direction = "ASC" if sort == "oldest" else "DESC"
     # SQLite treats a negative LIMIT as "no limit" -- callers pass 0 to mean "all".
@@ -266,6 +290,9 @@ def _row_to_summary(row) -> NewsletterSummary:
         slug=row["slug"],
         created_at=row["created_at"],
         thumbnail_key=row["thumbnail_key"],
+        quarantined_at=row["quarantined_at"],
+        deleted_at=row["deleted_at"],
+        deleted_by=row["deleted_by"],
     )
 
 
@@ -549,7 +576,7 @@ async def list_sender_cards(db) -> list[SenderCard]:
                        PARTITION BY from_email ORDER BY received_at DESC, id DESC
                    ) AS rn
             FROM newsletters
-            WHERE from_email IS NOT NULL
+            WHERE from_email IS NOT NULL AND quarantined_at IS NULL AND deleted_at IS NULL
         )
         WHERE rn = 1
         ORDER BY received_at DESC
@@ -566,3 +593,70 @@ async def list_sender_cards(db) -> list[SenderCard]:
         )
         for r in result.results
     ]
+
+
+async def list_quarantined(db) -> list[NewsletterSummary]:
+    result = await db.prepare(
+        f"SELECT {_LIST_COLUMNS} FROM newsletters "
+        "WHERE quarantined_at IS NOT NULL AND deleted_at IS NULL ORDER BY quarantined_at DESC"
+    ).all()
+    return [_row_to_summary(row) for row in result.results]
+
+
+async def release_from_quarantine(db, slug: str) -> None:
+    await db.prepare("UPDATE newsletters SET quarantined_at = NULL WHERE slug = ?").bind(slug).run()
+
+
+async def release_all_from_sender(db, from_email: str) -> None:
+    await (
+        db.prepare("UPDATE newsletters SET quarantined_at = NULL WHERE from_email = ? AND quarantined_at IS NOT NULL")
+        .bind(from_email)
+        .run()
+    )
+
+
+async def list_deleted(db) -> list[NewsletterSummary]:
+    result = await db.prepare(
+        f"SELECT {_LIST_COLUMNS} FROM newsletters WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC"
+    ).all()
+    return [_row_to_summary(row) for row in result.results]
+
+
+async def restore_newsletter(db, slug: str) -> None:
+    await (
+        db.prepare("UPDATE newsletters SET deleted_at = NULL, deleted_by = NULL WHERE slug = ?")
+        .bind(slug)
+        .run()
+    )
+
+
+@dataclass
+class AllowlistEntry:
+    id: int
+    email: str
+    created_at: str
+
+
+async def list_allowlist(db) -> list[AllowlistEntry]:
+    result = await db.prepare("SELECT id, email, created_at FROM sender_allowlist ORDER BY email").all()
+    return [
+        AllowlistEntry(id=r["id"], email=r["email"], created_at=r["created_at"]) for r in result.results
+    ]
+
+
+async def is_sender_allowlisted(db, email: str) -> bool:
+    row = await db.prepare("SELECT 1 AS present FROM sender_allowlist WHERE email = ?").bind(email).first()
+    return row is not None
+
+
+async def add_to_allowlist(db, email: str) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    await (
+        db.prepare("INSERT INTO sender_allowlist (email, created_at) VALUES (?, ?) ON CONFLICT(email) DO NOTHING")
+        .bind(email, now)
+        .run()
+    )
+
+
+async def remove_from_allowlist(db, entry_id: int) -> None:
+    await db.prepare("DELETE FROM sender_allowlist WHERE id = ?").bind(entry_id).run()

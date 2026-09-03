@@ -7,6 +7,7 @@ from newsletter_archive.sanitizer import (
     find_external_css_images,
     find_external_images,
     find_trackable_links,
+    force_links_new_tab,
     neutralize_unsubscribe_links,
     rewrite_css_image_urls,
     rewrite_external_images,
@@ -49,6 +50,38 @@ def test_does_not_touch_view_in_browser_or_content_links():
     assert links_by_text["View this post in your browser"].startswith("https://")
     assert links_by_text["Leave a comment"].startswith("https://")
     assert links_by_text["Opt out of these emails"] is None
+
+
+def test_force_links_new_tab_normalizes_every_target():
+    html = (
+        '<a href="https://example.com/no-target">No target</a>'
+        '<a href="https://example.com/self" target="_self">Self target</a>'
+        '<a href="https://example.com/blank" target="_blank">Already blank</a>'
+        '<a>No href at all</a>'
+    )
+    soup = BeautifulSoup(force_links_new_tab(html), "html.parser")
+    anchors = {a.get_text(strip=True): a for a in soup.find_all("a")}
+
+    for text in ("No target", "Self target", "Already blank"):
+        assert anchors[text]["target"] == "_blank"
+        # BeautifulSoup treats "rel" as a multi-valued attribute, so re-parsing the
+        # serialized HTML gives a list back rather than the original space-joined string.
+        assert anchors[text]["rel"] == ["noopener", "noreferrer"]
+
+    assert anchors["No href at all"].get("target") is None
+
+
+def test_force_links_new_tab_does_not_touch_neutralized_unsubscribe_links():
+    raw = (FIXTURES / "mailchimp_style.eml").read_bytes()
+    html = parse_email(raw).html_body
+    sanitized = force_links_new_tab(neutralize_unsubscribe_links(html))
+    links_by_text = _links_by_text(sanitized)
+
+    assert links_by_text["Unsubscribe"] is None
+    assert links_by_text["Manage your preferences"] is None
+    soup = BeautifulSoup(sanitized, "html.parser")
+    content_link = next(a for a in soup.find_all("a") if a.get("href", "").startswith("https://acme-newsletter.com"))
+    assert content_link["target"] == "_blank"
 
 
 def test_all_visible_text_content_is_preserved():

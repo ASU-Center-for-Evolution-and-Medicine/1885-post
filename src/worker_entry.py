@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from datetime import timezone
+from datetime import datetime, timezone
 from email.utils import parseaddr
 
 import js
@@ -32,6 +32,7 @@ from newsletter_archive.sanitizer import (
     find_external_css_images,
     find_external_images,
     find_trackable_links,
+    force_links_new_tab,
     neutralize_unsubscribe_links,
     rewrite_css_image_urls,
     rewrite_external_images,
@@ -73,6 +74,22 @@ _BULK_FETCH_BUDGET = 300
 # place regardless, since a newsletter that fails for some other reason should still be
 # deprioritized rather than block the rest.
 _MAX_NEWSLETTERS_PER_BATCH = 20
+
+# Sender quarantine: only *.asu.edu senders (any subdomain) are treated as normal by
+# default -- anything else lands in quarantine (storage.list_quarantined) instead of
+# the public archive/homepage/embeds, unless the sender's address is explicitly
+# allowlisted (storage.sender_allowlist). Checked against the parsed From: header
+# (from_email) rather than the raw SMTP envelope sender, since that's the same "sender"
+# identity used everywhere else in the app (admin grants, homepage, etc.) -- keeps what
+# a moderator sees in the quarantine queue consistent with what triggered it.
+_ASU_DOMAIN = "asu.edu"
+
+
+def _is_asu_sender(email: str | None) -> bool:
+    if not email:
+        return False
+    domain = email.rsplit("@", 1)[-1].lower()
+    return domain == _ASU_DOMAIN or domain.endswith("." + _ASU_DOMAIN)
 
 
 class _FetchBudget:
@@ -269,6 +286,7 @@ async def _build_sanitized_html(
 
     html, links_done = await _resolve_tracked_links_in(html, db, budget)
     html = neutralize_unsubscribe_links(html)
+    html = force_links_new_tab(html)
     html, thumbnail_key, images_done = await _mirror_external_assets_in(html, slug, db, bucket, budget)
 
     if parsed.inline_images:
@@ -294,6 +312,11 @@ async def ingest_via_d1(raw_bytes: bytes, to_address: str, db, bucket) -> storag
     html, thumbnail_key, _fully_processed = await _build_sanitized_html(parsed, slug, db, bucket)
     from_email = parseaddr(parsed.from_address)[1].lower() or None
 
+    quarantined_at = None
+    if not _is_asu_sender(from_email):
+        if not (from_email and await storage.is_sender_allowlisted(db, from_email)):
+            quarantined_at = datetime.now(timezone.utc).isoformat()
+
     await storage.insert_newsletter(
         db,
         message_id=parsed.message_id,
@@ -307,6 +330,7 @@ async def ingest_via_d1(raw_bytes: bytes, to_address: str, db, bucket) -> storag
         sanitized_html=html,
         plain_text_fallback=parsed.text_body,
         thumbnail_key=thumbnail_key,
+        quarantined_at=quarantined_at,
     )
 
     newsletter_id = await storage.get_id_by_slug(db, slug)
