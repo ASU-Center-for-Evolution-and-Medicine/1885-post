@@ -11,12 +11,12 @@ docstring / worker_entry.py for how the two paths stay in sync on schema and beh
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parseaddr
 
 _LIST_COLUMNS = (
     "id, message_id, from_address, from_email, to_address, subject, received_at, slug, created_at, "
-    "thumbnail_key, quarantined_at, deleted_at, deleted_by"
+    "thumbnail_key, quarantined_at, deleted_at, deleted_by, visibility"
 )
 _DETAIL_COLUMNS = _LIST_COLUMNS + ", sanitized_html, plain_text_fallback"
 
@@ -36,6 +36,7 @@ class NewsletterSummary:
     quarantined_at: str | None = None
     deleted_at: str | None = None
     deleted_by: str | None = None
+    visibility: str = "public"
 
 
 @dataclass
@@ -59,6 +60,7 @@ async def insert_newsletter(
     plain_text_fallback: str | None,
     thumbnail_key: str | None = None,
     quarantined_at: str | None = None,
+    visibility: str = "public",
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     await (
@@ -66,8 +68,9 @@ async def insert_newsletter(
             """
             INSERT INTO newsletters
                 (message_id, from_address, from_email, to_address, subject, received_at, slug,
-                 raw_eml, sanitized_html, plain_text_fallback, thumbnail_key, quarantined_at, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 raw_eml, sanitized_html, plain_text_fallback, thumbnail_key, quarantined_at,
+                 visibility, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(slug) DO NOTHING
             """
         )
@@ -84,6 +87,7 @@ async def insert_newsletter(
             plain_text_fallback,
             thumbnail_key,
             quarantined_at,
+            visibility,
             now,
         )
         .run()
@@ -258,9 +262,15 @@ async def list_newsletters(
     sort: str = "newest",
     limit: int = 50,
     offset: int = 0,
+    public_only: bool = False,
 ) -> list[NewsletterSummary]:
+    """public_only is what keeps private newsletters off every public surface (embeds,
+    share links). The authenticated site deliberately leaves it off -- private means
+    "not publicly exposed", not "hidden from logged-in users"."""
     where = "WHERE quarantined_at IS NULL AND deleted_at IS NULL"
     params: list[str] = []
+    if public_only:
+        where += " AND visibility = 'public'"
     if sender:
         where += " AND from_email = ?"
         params.append(sender)
@@ -293,6 +303,7 @@ def _row_to_summary(row) -> NewsletterSummary:
         quarantined_at=row["quarantined_at"],
         deleted_at=row["deleted_at"],
         deleted_by=row["deleted_by"],
+        visibility=row["visibility"] or "public",
     )
 
 
@@ -630,6 +641,25 @@ async def restore_newsletter(db, slug: str) -> None:
     )
 
 
+async def count_all_newsletters(db) -> int:
+    """Unlike count_newsletters, deliberately unfiltered -- every row ever ingested,
+    quarantined/deleted or not, for the admin ingestion-log page."""
+    row = await db.prepare("SELECT COUNT(*) AS n FROM newsletters").first()
+    return row["n"] if row else 0
+
+
+async def list_all_newsletters(db, *, limit: int, offset: int) -> list[NewsletterSummary]:
+    """Unlike list_newsletters, deliberately unfiltered and ordered by created_at (when
+    the row was actually added) rather than received_at (the email's own date) -- a true
+    ingestion log for the admin-only /admin/newsletters page."""
+    result = await (
+        db.prepare(f"SELECT {_LIST_COLUMNS} FROM newsletters ORDER BY created_at DESC LIMIT ? OFFSET ?")
+        .bind(limit, offset)
+        .all()
+    )
+    return [_row_to_summary(row) for row in result.results]
+
+
 @dataclass
 class AllowlistEntry:
     id: int
@@ -660,3 +690,177 @@ async def add_to_allowlist(db, email: str) -> None:
 
 async def remove_from_allowlist(db, entry_id: int) -> None:
     await db.prepare("DELETE FROM sender_allowlist WHERE id = ?").bind(entry_id).run()
+
+
+@dataclass
+class ActionLogEntry:
+    id: int
+    created_at: str
+    actor_email: str
+    action: str
+    target: str | None
+    detail: str | None
+
+
+async def log_action(
+    db, *, actor_email: str, action: str, target: str | None = None, detail: str | None = None
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    await (
+        db.prepare(
+            "INSERT INTO action_log (created_at, actor_email, action, target, detail) VALUES (?, ?, ?, ?, ?)"
+        )
+        .bind(now, actor_email, action, target, detail)
+        .run()
+    )
+
+
+_LOGIN_SESSION_WINDOW = timedelta(hours=4)
+
+
+async def log_login_if_new_session(db, actor_email: str) -> None:
+    """At most one "login" row per user per rolling _LOGIN_SESSION_WINDOW -- there's no
+    real login step in this app (Cloudflare Access re-verifies the same session on every
+    request), so this approximates "a new session" without a write on every page view."""
+    cutoff = (datetime.now(timezone.utc) - _LOGIN_SESSION_WINDOW).isoformat()
+    existing = await (
+        db.prepare(
+            "SELECT 1 AS present FROM action_log WHERE actor_email = ? AND action = 'login' "
+            "AND created_at > ? LIMIT 1"
+        )
+        .bind(actor_email, cutoff)
+        .first()
+    )
+    if not existing:
+        await log_action(db, actor_email=actor_email, action="login")
+
+
+async def count_action_log(db) -> int:
+    row = await db.prepare("SELECT COUNT(*) AS n FROM action_log").first()
+    return row["n"] if row else 0
+
+
+async def list_action_log(db, *, limit: int, offset: int) -> list[ActionLogEntry]:
+    result = await (
+        db.prepare(
+            "SELECT id, created_at, actor_email, action, target, detail FROM action_log "
+            "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
+        )
+        .bind(limit, offset)
+        .all()
+    )
+    return [
+        ActionLogEntry(
+            id=r["id"],
+            created_at=r["created_at"],
+            actor_email=r["actor_email"],
+            action=r["action"],
+            target=r["target"],
+            detail=r["detail"],
+        )
+        for r in result.results
+    ]
+
+
+async def set_newsletter_visibility(db, slug: str, visibility: str) -> None:
+    await (
+        db.prepare("UPDATE newsletters SET visibility = ? WHERE slug = ?")
+        .bind(visibility, slug)
+        .run()
+    )
+
+
+@dataclass
+class SenderSettings:
+    from_email: str
+    default_visibility: str | None
+    share_key: str | None
+    updated_at: str
+    updated_by: str | None
+
+
+def _row_to_sender_settings(row) -> SenderSettings:
+    return SenderSettings(
+        from_email=row["from_email"],
+        default_visibility=row["default_visibility"],
+        share_key=row["share_key"],
+        updated_at=row["updated_at"],
+        updated_by=row["updated_by"],
+    )
+
+
+async def get_sender_settings(db, from_email: str) -> SenderSettings | None:
+    row = await (
+        db.prepare(
+            "SELECT from_email, default_visibility, share_key, updated_at, updated_by "
+            "FROM sender_settings WHERE from_email = ?"
+        )
+        .bind(from_email)
+        .first()
+    )
+    return _row_to_sender_settings(row) if row else None
+
+
+async def list_sender_settings(db) -> list[SenderSettings]:
+    result = await db.prepare(
+        "SELECT from_email, default_visibility, share_key, updated_at, updated_by "
+        "FROM sender_settings ORDER BY from_email"
+    ).all()
+    return [_row_to_sender_settings(row) for row in result.results]
+
+
+async def set_sender_default_visibility(db, from_email: str, visibility: str, updated_by: str) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    await (
+        db.prepare(
+            "INSERT INTO sender_settings (from_email, default_visibility, updated_at, updated_by) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(from_email) DO UPDATE SET default_visibility = excluded.default_visibility, "
+            "updated_at = excluded.updated_at, updated_by = excluded.updated_by"
+        )
+        .bind(from_email, visibility, now, updated_by)
+        .run()
+    )
+
+
+async def set_sender_share_key(db, from_email: str, share_key: str | None, updated_by: str) -> None:
+    """share_key=None revokes public sharing for the sender, instantly killing every
+    link previously shared under the old key."""
+    now = datetime.now(timezone.utc).isoformat()
+    await (
+        db.prepare(
+            "INSERT INTO sender_settings (from_email, share_key, updated_at, updated_by) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(from_email) DO UPDATE SET share_key = excluded.share_key, "
+            "updated_at = excluded.updated_at, updated_by = excluded.updated_by"
+        )
+        .bind(from_email, share_key, now, updated_by)
+        .run()
+    )
+
+
+async def get_sender_by_share_key(db, share_key: str) -> str | None:
+    row = await (
+        db.prepare("SELECT from_email FROM sender_settings WHERE share_key = ?").bind(share_key).first()
+    )
+    return row["from_email"] if row else None
+
+
+async def sender_has_admin(db, from_email: str) -> bool:
+    row = await (
+        db.prepare("SELECT 1 AS present FROM newsletter_admins WHERE from_email = ? LIMIT 1")
+        .bind(from_email)
+        .first()
+    )
+    return row is not None
+
+
+async def resolve_default_visibility(db, from_email: str) -> str:
+    """Visibility a newly-ingested newsletter from this sender should get. An explicit
+    per-sender setting wins; otherwise a sender somebody administers defaults to public
+    and an unadministered one to private -- so an unsolicited ASU address can't get its
+    content onto a public surface just by emailing in."""
+    settings = await get_sender_settings(db, from_email)
+    if settings and settings.default_visibility:
+        return settings.default_visibility
+    return "public" if await sender_has_admin(db, from_email) else "private"

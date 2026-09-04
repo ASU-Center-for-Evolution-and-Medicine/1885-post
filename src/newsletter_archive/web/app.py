@@ -338,21 +338,43 @@ a.page-btn:hover { background: var(--asu-maroon); color: #fff; text-decoration: 
 }
 
 .app-footer {
-  display: flex; align-items: center; justify-content: center;
-  gap: 0.75rem; font-size: 0.65rem; color: rgba(74, 74, 88, 0.8);
-  text-align: left; padding: 0.75rem 1rem;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 0.5rem; padding: 0.75rem 1rem;
 }
-.app-footer__text { display: flex; flex-direction: column; gap: 0.1rem; }
-.app-footer p { margin: 0; padding: 0; }
-.app-footer a { color: rgba(140, 29, 64, 0.85); font-weight: 600; text-decoration: none; }
-.app-footer a:hover { text-decoration: underline; }
-.app-footer__logo { display: block; height: 60px; width: auto; border-radius: 4px; flex: 0 0 auto; }
-.app-footer a.app-footer__help {
+.app-footer__buttons { display: flex; align-items: center; gap: 0.75rem; }
+.app-footer__credit {
+  margin: 0; font-size: 0.7rem; color: var(--text-muted); text-align: center;
+}
+.app-footer__btn {
   flex: 0 0 auto; color: #fff; background: var(--asu-maroon);
   font-weight: 700; font-size: 0.75rem; padding: 0.4rem 1rem;
   border-radius: 999px; text-decoration: none; white-space: nowrap;
 }
-.app-footer a.app-footer__help:hover { background: var(--asu-black); color: #fff; text-decoration: none; }
+.app-footer__btn:hover { background: var(--asu-black); color: #fff; text-decoration: none; }
+
+.about-logo { display: block; height: 80px; width: auto; border-radius: 4px; }
+
+.visibility-badge {
+  display: inline-block; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; padding: 0.1rem 0.45rem; border-radius: 999px;
+  background: var(--asu-sand); color: var(--asu-maroon); vertical-align: middle;
+}
+.visibility-badge--private { background: var(--asu-maroon); color: #fff; }
+.share-link {
+  display: block; font-size: 0.72rem; background: var(--asu-sand); color: var(--text-primary);
+  padding: 0.3rem 0.5rem; border-radius: 6px; margin-bottom: 0.4rem; word-break: break-all;
+}
+
+.admin-footer {
+  display: flex; align-items: center; justify-content: center; gap: 1rem;
+  padding: 0.6rem 1rem; background: var(--asu-sand); font-size: 0.8rem;
+}
+.admin-footer-label {
+  background: var(--asu-maroon); color: #fff; font-weight: 700;
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 0.25rem 0.6rem; border-radius: 999px;
+}
+.admin-footer a { font-weight: 600; }
 """
 
 _TEMPLATES = {
@@ -382,8 +404,6 @@ _TEMPLATES = {
             <a class="nav-link" href="/archive">Archive</a>
             <a class="nav-link" href="/embeds">Embeds</a>
             <a class="nav-link" href="/permissions">Permissions</a>
-            {% if is_super_admin %}<a class="nav-link" href="/quarantine">Quarantine</a>{% endif %}
-            {% if is_super_admin %}<a class="nav-link" href="/deleted">Deleted</a>{% endif %}
           </nav>
         {% elif embed_back_url %}
           <a class="nav-link" href="{{ embed_back_url }}">{{ embed_back_label }}</a>
@@ -403,12 +423,22 @@ _TEMPLATES = {
     {% block content %}{% endblock %}
   </main>
   <footer class="app-footer">
-    <a href="https://evmed.asu.edu"><img src="/static/logo.png" alt="Center for Evolution and Medicine logo" class="app-footer__logo" width="220" height="55"></a>
-    <div class="app-footer__text">
-      <p>Made by the <a href="https://evmed.asu.edu/">Center for Evolution and Medicine</a> at <a href="https://asu.edu">Arizona State University</a>.</p>
+    <div class="app-footer__buttons">
+      <a href="/about" class="app-footer__btn">About</a>
+      <a href="/help" class="app-footer__btn">Help</a>
     </div>
-    <a href="/help" class="app-footer__help">Help</a>
+    <p class="app-footer__credit">Built and maintained by the
+    <a href="https://evmed.asu.edu/">Center for Evolution and Medicine</a> at ASU</p>
   </footer>
+  {% if is_super_admin %}
+    <footer class="admin-footer">
+      <span class="admin-footer-label">Superadmin</span>
+      <a href="/admin/newsletters">All newsletters</a>
+      <a href="/admin/actions">Action log</a>
+      <a href="/quarantine">Quarantine</a>
+      <a href="/deleted">Deleted</a>
+    </footer>
+  {% endif %}
 </body>
 </html>
 """,
@@ -486,7 +516,7 @@ _TEMPLATES = {
                 {% endif %}
               </a>
               <div class="li-text">
-                <a class="subject" href="/n/{{ n.slug }}">{{ n.subject }}</a>
+                <a class="subject" href="/n/{{ n.slug }}">{{ n.subject }}</a>{% if n.visibility != "public" %} <span class="visibility-badge visibility-badge--private">Private</span>{% endif %}
                 <div class="meta">
                   {{ n.from_address }} &middot; {{ (n.received_at or n.created_at)|humandate }}
                   {% if is_super_admin or n.from_email in admin_senders %}
@@ -557,7 +587,16 @@ _TEMPLATES = {
             Print
           </button>
         </div>
-        <div class="meta">From {{ newsletter.from_address }} &middot; {{ (newsletter.received_at or newsletter.created_at)|humandate }}</div>
+        <div class="meta">From {{ newsletter.from_address }} &middot; {{ (newsletter.received_at or newsletter.created_at)|humandate }}
+          {% if identity_display %}
+            &middot;
+            {% if newsletter.visibility == "public" %}
+              <span class="visibility-badge">Public</span>
+            {% else %}
+              <span class="visibility-badge visibility-badge--private">Private</span>
+            {% endif %}
+          {% endif %}
+        </div>
       </div>
 
       {% if newsletter.sanitized_html %}
@@ -644,6 +683,32 @@ _TEMPLATES = {
     {% if is_super_admin or is_admin %}
       <aside class="sidebar admin-sidebar">
         <div class="sidebar-section">
+          <h2>Sharing</h2>
+          {% if newsletter.visibility == "public" %}
+            <p class="meta">Public -- appears in embeds and can be shared publicly.</p>
+            {% if sender_share_key %}
+              <code class="share-link">{{ base_url }}/embed/s/{{ sender_share_key }}/n/{{ newsletter.slug }}</code>
+              <button type="button" class="secondary-btn copy-btn" data-url="{{ base_url }}/embed/s/{{ sender_share_key }}/n/{{ newsletter.slug }}">Copy public link</button>
+            {% else %}
+              <p class="meta">This sender has no public sharing key yet.</p>
+              <form class="secondary-form" method="post" action="/n/{{ newsletter.slug }}/share-key">
+                <button type="submit" class="secondary-btn">Create public link</button>
+              </form>
+            {% endif %}
+            <form class="secondary-form" method="post" action="/n/{{ newsletter.slug }}/visibility">
+              <input type="hidden" name="visibility" value="private">
+              <button type="submit" class="secondary-btn">Make private</button>
+            </form>
+          {% else %}
+            <p class="meta">Private -- hidden from every embed and has no public link.
+            Still visible to signed-in users here.</p>
+            <form class="secondary-form" method="post" action="/n/{{ newsletter.slug }}/visibility">
+              <input type="hidden" name="visibility" value="public">
+              <button type="submit" class="secondary-btn">Make public</button>
+            </form>
+          {% endif %}
+        </div>
+        <div class="sidebar-section">
           <h2>Admin</h2>
           <form class="date-form" method="post" action="/n/{{ newsletter.slug }}/date">
             <label for="received_at">Send date</label>
@@ -658,6 +723,17 @@ _TEMPLATES = {
           </form>
         </div>
       </aside>
+      <script>
+        document.querySelectorAll(".copy-btn").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            navigator.clipboard.writeText(btn.dataset.url).then(() => {
+              const original = btn.textContent;
+              btn.textContent = "Copied!";
+              setTimeout(() => { btn.textContent = original; }, 1500);
+            });
+          });
+        });
+      </script>
     {% endif %}
   </div>
 {% endblock %}
@@ -680,10 +756,22 @@ _TEMPLATES = {
   to <a href="/embeds">Embeds</a>, fill in a name and the sender to show, then click
   <strong>Create embed</strong> and paste the copied code into your site. Any logged-in
   user can create one, no admin access needed.</p>
+  <p class="meta"><strong>Public or private:</strong> every newsletter is one or the
+  other, shown next to its date. Public means it appears in embeds and can be shared
+  outside ASU; private means it's visible to signed-in people here but nowhere else.
+  If you administer a sender, each newsletter has a <strong>Make private</strong> /
+  <strong>Make public</strong> button, and you can set what new mail from your address
+  defaults to under Sender settings on <a href="/permissions">Permissions</a>.</p>
+  <p class="meta"><strong>Sharing one newsletter:</strong> open it and use
+  <strong>Copy public link</strong> -- no embed needed. The first time, click
+  <strong>Create public link</strong> to mint your sender's sharing key; every public
+  newsletter from that address is shareable from then on, and revoking the key on
+  <a href="/permissions">Permissions</a> switches all those links off at once.</p>
   <p class="meta"><strong>Permissions:</strong> admin access is per sending address -- it
-  lets you delete, backdate, and manage embeds for newsletters from that sender, even
-  ones you didn't create yourself. It's not needed just to create your own embeds. See
-  <a href="/permissions">Permissions</a> for who currently administers which sender.</p>
+  lets you delete, backdate, publish, and manage embeds for newsletters from that
+  sender, even ones you didn't create yourself. It's not needed just to create your own
+  embeds. See <a href="/permissions">Permissions</a> for who currently administers which
+  sender.</p>
 
   <h2>What happens behind the scenes</h2>
   <p class="meta">A few things happen automatically when a newsletter is archived, so
@@ -708,6 +796,21 @@ _TEMPLATES = {
   <h2>Contact</h2>
   <p class="meta">Questions, need admin access, or have a feature request? Contact Suhail
   (<a href="mailto:suhail.ghafoor@asu.edu">suhail.ghafoor@asu.edu</a>).</p>
+{% endblock %}
+""",
+    "about.html": """{% extends "base.html" %}
+{% block title %}About · The 1885 Post{% endblock %}
+{% block content %}
+  <h1>About</h1>
+
+  <p class="meta">The 1885 Post is a university-wide archive for ASU newsletters -- one
+  permanent, linkable home for every department's newsletter, instead of each issue
+  living only in inboxes and disappearing after it's sent.</p>
+
+  <p><a href="https://evmed.asu.edu"><img src="/static/logo.png" alt="Center for Evolution and Medicine logo" class="about-logo" width="220" height="55"></a></p>
+
+  <p class="meta">Made by the <a href="https://evmed.asu.edu/">Center for Evolution and
+  Medicine</a> at <a href="https://asu.edu">Arizona State University</a>.</p>
 {% endblock %}
 """,
     "permissions.html": """{% extends "base.html" %}
@@ -750,6 +853,55 @@ _TEMPLATES = {
     </table>
   {% else %}
     <p class="empty">No admin grants yet.</p>
+  {% endif %}
+
+  {% if sender_settings %}
+    <h2>Sender settings</h2>
+    <p class="meta">For senders you administer. <strong>Default</strong> decides whether
+    a newly-arrived newsletter from that address is public (in embeds, publicly
+    shareable) or private (signed-in users only) -- you can still flip any individual
+    newsletter afterwards. <strong>Public sharing</strong> mints one unguessable link
+    per sender, used for every "Copy public link" from that sender; revoking it
+    immediately breaks every link previously shared under it.</p>
+    <table class="admin-table">
+      <thead><tr><th>Sender</th><th>Default for new newsletters</th><th>Public sharing</th></tr></thead>
+      <tbody>
+        {% for s in sender_settings %}
+          <tr>
+            <td>{{ s.name }}<div class="sender-email">{{ s.from_email }}</div></td>
+            <td>
+              <form class="date-form" method="post" action="/permissions/senders/default">
+                <input type="hidden" name="from_email" value="{{ s.from_email }}">
+                <select name="visibility">
+                  <option value="public" {{ "selected" if s.default_visibility == "public" }}>Public</option>
+                  <option value="private" {{ "selected" if s.default_visibility == "private" }}>Private</option>
+                </select>
+                <button type="submit">Save</button>
+              </form>
+              {% if not s.is_explicit %}
+                <div class="meta">inherited &mdash; not set explicitly</div>
+              {% endif %}
+            </td>
+            <td>
+              {% if s.share_key %}
+                <code class="share-link">{{ base_url }}/embed/s/{{ s.share_key }}</code>
+                <form class="delete-form" method="post" action="/permissions/senders/share-key" onsubmit="return confirm('Revoke this sharing key? Every public link already shared for this sender stops working.');">
+                  <input type="hidden" name="from_email" value="{{ s.from_email }}">
+                  <input type="hidden" name="action" value="revoke">
+                  <button type="submit" class="delete-btn">Revoke key</button>
+                </form>
+              {% else %}
+                <form class="secondary-form" method="post" action="/permissions/senders/share-key">
+                  <input type="hidden" name="from_email" value="{{ s.from_email }}">
+                  <input type="hidden" name="action" value="mint">
+                  <button type="submit" class="secondary-btn">Create sharing key</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   {% endif %}
 {% endblock %}
 """,
@@ -854,6 +1006,104 @@ _TEMPLATES = {
   {% endif %}
 {% endblock %}
 """,
+    "admin_newsletters.html": """{% extends "base.html" %}
+{% block title %}All Newsletters · The 1885 Post{% endblock %}
+{% block content %}
+  <h1>All Newsletters</h1>
+
+  <p class="meta">Every newsletter ever ingested, ordered by when it was actually added
+  to the archive (not the date on the email itself) -- including quarantined and
+  deleted ones, shown below with their status.</p>
+
+  {% if newsletters %}
+    <table class="admin-table">
+      <thead><tr><th>Subject</th><th>From</th><th>Created</th><th>Received</th><th>Visibility</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for n in newsletters %}
+          <tr>
+            <td><a href="/n/{{ n.slug }}">{{ n.subject }}</a></td>
+            <td>{{ n.from_address }}</td>
+            <td>{{ n.created_at|humandate }}</td>
+            <td>{{ (n.received_at or n.created_at)|humandate }}</td>
+            <td>{{ "Public" if n.visibility == "public" else "Private" }}</td>
+            <td>
+              {% if n.deleted_at %}Deleted{% elif n.quarantined_at %}Quarantined{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="empty">No newsletters yet.</p>
+  {% endif %}
+
+  <div class="pagination">
+    {% if page > 1 %}
+      <a class="page-btn" href="?page={{ page - 1 }}">&larr; Newer</a>
+    {% endif %}
+    {% for item in pagination_items %}
+      {% if item is none %}
+        <span class="page-ellipsis">&hellip;</span>
+      {% elif item == page %}
+        <span class="page-btn active">{{ item }}</span>
+      {% else %}
+        <a class="page-btn" href="?page={{ item }}">{{ item }}</a>
+      {% endif %}
+    {% endfor %}
+    {% if has_next %}
+      <a class="page-btn" href="?page={{ page + 1 }}">Older &rarr;</a>
+    {% endif %}
+  </div>
+{% endblock %}
+""",
+    "admin_actions.html": """{% extends "base.html" %}
+{% block title %}Action Log · The 1885 Post{% endblock %}
+{% block content %}
+  <h1>Action Log</h1>
+
+  <p class="meta">A login row appears at most once per person per 4-hour session;
+  every modification -- deleting/restoring/backdating/reprocessing a newsletter,
+  creating/editing/revoking an embed, granting/revoking permissions, any quarantine
+  action -- gets its own row showing who did it.</p>
+
+  {% if entries %}
+    <table class="admin-table">
+      <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead>
+      <tbody>
+        {% for e in entries %}
+          <tr>
+            <td>{{ e.created_at|humandatetime }}</td>
+            <td>{{ e.actor_email }}</td>
+            <td>{{ e.action }}</td>
+            <td>{{ e.target or "" }}</td>
+            <td>{{ e.detail or "" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="empty">No actions logged yet.</p>
+  {% endif %}
+
+  <div class="pagination">
+    {% if page > 1 %}
+      <a class="page-btn" href="?page={{ page - 1 }}">&larr; Newer</a>
+    {% endif %}
+    {% for item in pagination_items %}
+      {% if item is none %}
+        <span class="page-ellipsis">&hellip;</span>
+      {% elif item == page %}
+        <span class="page-btn active">{{ item }}</span>
+      {% else %}
+        <a class="page-btn" href="?page={{ item }}">{{ item }}</a>
+      {% endif %}
+    {% endfor %}
+    {% if has_next %}
+      <a class="page-btn" href="?page={{ page + 1 }}">Older &rarr;</a>
+    {% endif %}
+  </div>
+{% endblock %}
+""",
     "embeds.html": """{% extends "base.html" %}
 {% block title %}Embeds · The 1885 Post{% endblock %}
 {% block content %}
@@ -936,7 +1186,7 @@ _TEMPLATES = {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <title>{{ embed.name }} · The 1885 Post</title>
+  <title>{{ feed_title }} · The 1885 Post</title>
   <link rel="stylesheet" href="/static/style.css">
   <style>
     body { margin: 0; padding: 0.75rem 1rem; }
@@ -977,12 +1227,12 @@ _TEMPLATES = {
     <ul class="embed-list">
       {% for n in newsletters %}
         <li>
-          {% if embed.show_thumbnails and n.thumbnail_key %}
+          {% if show_thumbnails and n.thumbnail_key %}
             <img class="embed-thumb" src="/static/newsletters/{{ n.slug }}/{{ n.thumbnail_key }}" alt="" aria-hidden="true">
           {% endif %}
           <div class="embed-list-text">
             <div class="embed-date">{{ (n.received_at or n.created_at)|humandate }}</div>
-            <a href="/embed/{{ token }}/n/{{ n.slug }}" target="_blank" rel="noopener">{{ n.subject }}</a>
+            <a href="{{ item_url_prefix }}/n/{{ n.slug }}" target="_blank" rel="noopener">{{ n.subject }}</a>
           </div>
         </li>
       {% endfor %}
@@ -1007,8 +1257,21 @@ def _humandate(value: str | None) -> str:
     return dt.strftime("%b %d, %Y").replace(" 0", " ")
 
 
+def _humandatetime(value: str | None) -> str:
+    """Like _humandate but with a time -- for the action log, where same-day entries
+    need to be distinguishable."""
+    if not value:
+        return ""
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    return dt.strftime("%b %d, %Y %H:%M UTC").replace(" 0", " ")
+
+
 _jinja_env = jinja2.Environment(loader=jinja2.DictLoader(_TEMPLATES), autoescape=True)
 _jinja_env.filters["humandate"] = _humandate
+_jinja_env.filters["humandatetime"] = _humandatetime
 
 
 def _render(template_name: str, **context) -> HTMLResponse:
@@ -1032,9 +1295,17 @@ async def _current_user(request: Request) -> tuple[str | None, str | None]:
     reaches the site at all); a missing identity is the only thing that fails closed
     below, guarding the case where this Worker is reached some other way (e.g. its
     workers.dev URL) that Access doesn't protect.
+
+    Also the one central hook for login logging (action_log): every authenticated route
+    resolves identity through here, so this is where a "new session" gets recorded
+    rather than duplicating that call at every route.
     """
     identity = await access.get_identity(request)
-    return access.identity_email(identity), access.display_name(identity)
+    email = access.identity_email(identity)
+    display = access.display_name(identity)
+    if email:
+        await storage.log_login_if_new_session(_db(request), email)
+    return email, display
 
 
 def _is_super_admin(request: Request, email: str | None) -> bool:
@@ -1222,6 +1493,12 @@ async def view_newsletter(request: Request, slug: str):
 
     admin_senders = await storage.list_admin_senders(_db(request), email)
     base_url = str(request.base_url).rstrip("/")
+    # Only needed to render the "Copy public link" block, which is admin-only -- an
+    # unadministered sender's key is never put in front of a random logged-in user.
+    sender_share_key = None
+    if newsletter.from_email and (is_super or newsletter.from_email in admin_senders):
+        settings = await storage.get_sender_settings(_db(request), newsletter.from_email)
+        sender_share_key = settings.share_key if settings else None
     return _render(
         "permalink.html",
         newsletter=newsletter,
@@ -1231,6 +1508,7 @@ async def view_newsletter(request: Request, slug: str):
         is_super_admin=is_super,
         base_url=base_url,
         canonical_url=f"{base_url}/n/{slug}",
+        sender_share_key=sender_share_key,
     )
 
 
@@ -1261,6 +1539,7 @@ async def delete_newsletter(request: Request, slug: str):
         raise HTTPException(status_code=403, detail="Not an admin for this newsletter's sender")
 
     await storage.delete_newsletter(_db(request), slug, deleted_by=email)
+    await storage.log_action(_db(request), actor_email=email, action="newsletter.delete", target=slug, detail=newsletter.subject)
     return RedirectResponse(url="/archive", status_code=303)
 
 
@@ -1288,6 +1567,10 @@ async def update_newsletter_date(request: Request, slug: str):
 
     received_at = parsed_date.replace(tzinfo=timezone.utc).isoformat()
     await storage.update_received_at(_db(request), slug, received_at)
+    await storage.log_action(
+        _db(request), actor_email=email, action="newsletter.date_update", target=slug,
+        detail=f"received_at -> {received_at}",
+    )
     return RedirectResponse(url=f"/n/{slug}", status_code=303)
 
 
@@ -1309,6 +1592,65 @@ async def reprocess_newsletter(request: Request, slug: str):
     from worker_entry import reprocess_via_d1
 
     await reprocess_via_d1(slug, _db(request), _bucket(request))
+    await storage.log_action(_db(request), actor_email=email, action="newsletter.reprocess", target=slug)
+    return RedirectResponse(url=f"/n/{slug}", status_code=303)
+
+
+@app.post("/n/{slug}/visibility")
+async def update_newsletter_visibility(request: Request, slug: str):
+    """Publish or unpublish a single newsletter. Private keeps it on the authenticated
+    site but off every public surface -- embeds and share links. Same
+    admin-of-sender-or-super-admin gate as delete/date-edit."""
+    email, _identity_display = await _current_user(request)
+    if not email:
+        raise HTTPException(status_code=404, detail="Newsletter not found")
+
+    newsletter = await storage.get_by_slug(_db(request), slug)
+    if newsletter is None:
+        raise HTTPException(status_code=404, detail="Newsletter not found")
+
+    if not await _can_administer(request, email, newsletter):
+        raise HTTPException(status_code=403, detail="Not an admin for this newsletter's sender")
+
+    form = await _parse_form(request)
+    visibility = (form.get("visibility") or "").strip()
+    if visibility not in ("public", "private"):
+        raise HTTPException(status_code=400, detail="visibility must be public or private")
+
+    await storage.set_newsletter_visibility(_db(request), slug, visibility)
+    await storage.log_action(
+        _db(request), actor_email=email, action="newsletter.visibility", target=slug,
+        detail=f"{newsletter.visibility} -> {visibility}",
+    )
+    return RedirectResponse(url=f"/n/{slug}", status_code=303)
+
+
+@app.post("/n/{slug}/share-key")
+async def mint_share_key_from_newsletter(request: Request, slug: str):
+    """Convenience entry point for "Create public link" on a newsletter page -- mints
+    the sharing key for that newsletter's sender (see /permissions for the full
+    per-sender controls). No-op if one already exists, so a double-click can't rotate
+    the key and break links already shared."""
+    email, _identity_display = await _current_user(request)
+    if not email:
+        raise HTTPException(status_code=404, detail="Newsletter not found")
+
+    newsletter = await storage.get_by_slug(_db(request), slug)
+    if newsletter is None or not newsletter.from_email:
+        raise HTTPException(status_code=404, detail="Newsletter not found")
+
+    if not await _can_administer(request, email, newsletter):
+        raise HTTPException(status_code=403, detail="Not an admin for this newsletter's sender")
+
+    settings = await storage.get_sender_settings(_db(request), newsletter.from_email)
+    if not (settings and settings.share_key):
+        await storage.set_sender_share_key(
+            _db(request), newsletter.from_email, secrets.token_urlsafe(16), email
+        )
+        await storage.log_action(
+            _db(request), actor_email=email, action="sender.share_key_mint",
+            target=newsletter.from_email, detail=f"via {slug}",
+        )
     return RedirectResponse(url=f"/n/{slug}", status_code=303)
 
 
@@ -1320,6 +1662,22 @@ async def help_page(request: Request):
 
     return _render(
         "help.html",
+        identity_display=identity_display,
+        identity_email=email,
+        is_super_admin=_is_super_admin(request, email),
+    )
+
+
+@app.get("/about")
+async def about_page(request: Request):
+    """Attribution/credits -- the logo and "made by" line that used to sit in the footer
+    on every page, moved here so the footer is just two buttons."""
+    email, identity_display = await _current_user(request)
+    if not email:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    return _render(
+        "about.html",
         identity_display=identity_display,
         identity_email=email,
         is_super_admin=_is_super_admin(request, email),
@@ -1346,9 +1704,34 @@ async def permissions_dashboard(request: Request):
     is_super = _is_super_admin(request, email)
     grants = await storage.list_admin_grants(_db(request))
 
+    # Sender settings section: senders this user may configure (all of them for a super
+    # admin). "inherited" spells out the resolve_default_visibility fallback so an admin
+    # can see why new mail lands where it does without an explicit setting.
+    senders = await storage.list_senders(_db(request))
+    admin_senders = set(await storage.list_admin_senders(_db(request), email))
+    settings_by_sender = {s.from_email: s for s in await storage.list_sender_settings(_db(request))}
+    granted_senders = {g.from_email for g in grants}
+    sender_settings = []
+    for sender in senders:
+        if not (is_super or sender.from_email in admin_senders):
+            continue
+        settings = settings_by_sender.get(sender.from_email)
+        explicit = settings.default_visibility if settings else None
+        sender_settings.append(
+            {
+                "from_email": sender.from_email,
+                "name": sender.name,
+                "default_visibility": explicit or ("public" if sender.from_email in granted_senders else "private"),
+                "is_explicit": bool(explicit),
+                "share_key": settings.share_key if settings else None,
+            }
+        )
+
     return _render(
         "permissions.html",
         grants=grants,
+        sender_settings=sender_settings,
+        base_url=str(request.base_url).rstrip("/"),
         identity_display=identity_display,
         identity_email=email,
         is_super_admin=is_super,
@@ -1366,6 +1749,10 @@ async def add_admin_grant(request: Request):
     from_email = (form.get("from_email") or "").strip().lower()
     if grant_user_email and from_email:
         await storage.add_admin_grant(_db(request), grant_user_email, from_email)
+        await storage.log_action(
+            _db(request), actor_email=email, action="permission.grant", target=from_email,
+            detail=f"granted to {grant_user_email}",
+        )
     return RedirectResponse(url="/permissions", status_code=303)
 
 
@@ -1376,6 +1763,66 @@ async def delete_admin_grant(request: Request, grant_id: int):
         raise HTTPException(status_code=404, detail="Not found")
 
     await storage.delete_admin_grant(_db(request), grant_id)
+    await storage.log_action(_db(request), actor_email=email, action="permission.revoke", target=str(grant_id))
+    return RedirectResponse(url="/permissions", status_code=303)
+
+
+async def _can_administer_sender(request: Request, email: str, from_email: str) -> bool:
+    """Sender-level counterpart to _can_administer (which needs a newsletter): may this
+    user change settings for this sending address?"""
+    if _is_super_admin(request, email):
+        return True
+    return from_email in await storage.list_admin_senders(_db(request), email)
+
+
+@app.post("/permissions/senders/default")
+async def set_sender_default(request: Request):
+    """Default visibility for this sender's *incoming* newsletters. Set by one of that
+    sender's admins (or the super admin); overrides the administered-sender fallback in
+    storage.resolve_default_visibility."""
+    email, _identity_display = await _current_user(request)
+    if not email:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    form = await _parse_form(request)
+    from_email = (form.get("from_email") or "").strip().lower()
+    visibility = (form.get("visibility") or "").strip()
+    if not from_email or visibility not in ("public", "private"):
+        raise HTTPException(status_code=400, detail="from_email and a valid visibility are required")
+    if not await _can_administer_sender(request, email, from_email):
+        raise HTTPException(status_code=403, detail="Not an admin for this sender")
+
+    await storage.set_sender_default_visibility(_db(request), from_email, visibility, email)
+    await storage.log_action(
+        _db(request), actor_email=email, action="sender.default_visibility",
+        target=from_email, detail=visibility,
+    )
+    return RedirectResponse(url="/permissions", status_code=303)
+
+
+@app.post("/permissions/senders/share-key")
+async def set_sender_share_key(request: Request):
+    """Mint or revoke this sender's public sharing key. Revoking instantly breaks every
+    link shared under the old key, which is the point -- it's the kill switch."""
+    email, _identity_display = await _current_user(request)
+    if not email:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    form = await _parse_form(request)
+    from_email = (form.get("from_email") or "").strip().lower()
+    action = (form.get("action") or "").strip()
+    if not from_email or action not in ("mint", "revoke"):
+        raise HTTPException(status_code=400, detail="from_email and action=mint|revoke are required")
+    if not await _can_administer_sender(request, email, from_email):
+        raise HTTPException(status_code=403, detail="Not an admin for this sender")
+
+    share_key = secrets.token_urlsafe(16) if action == "mint" else None
+    await storage.set_sender_share_key(_db(request), from_email, share_key, email)
+    await storage.log_action(
+        _db(request), actor_email=email,
+        action="sender.share_key_mint" if action == "mint" else "sender.share_key_revoke",
+        target=from_email,
+    )
     return RedirectResponse(url="/permissions", status_code=303)
 
 
@@ -1408,6 +1855,7 @@ async def release_quarantined(request: Request, slug: str):
         raise HTTPException(status_code=404, detail="Not found")
 
     await storage.release_from_quarantine(_db(request), slug)
+    await storage.log_action(_db(request), actor_email=email, action="quarantine.release", target=slug)
     return RedirectResponse(url="/quarantine", status_code=303)
 
 
@@ -1425,6 +1873,10 @@ async def whitelist_from_quarantine(request: Request, slug: str):
 
     await storage.add_to_allowlist(_db(request), newsletter.from_email)
     await storage.release_all_from_sender(_db(request), newsletter.from_email)
+    await storage.log_action(
+        _db(request), actor_email=email, action="quarantine.whitelist", target=newsletter.from_email,
+        detail=f"via {slug}",
+    )
     return RedirectResponse(url="/quarantine", status_code=303)
 
 
@@ -1440,6 +1892,7 @@ async def add_allowlist_entry(request: Request):
     if allow_email:
         await storage.add_to_allowlist(_db(request), allow_email)
         await storage.release_all_from_sender(_db(request), allow_email)
+        await storage.log_action(_db(request), actor_email=email, action="quarantine.allowlist_add", target=allow_email)
     return RedirectResponse(url="/quarantine", status_code=303)
 
 
@@ -1450,6 +1903,7 @@ async def delete_allowlist_entry(request: Request, entry_id: int):
         raise HTTPException(status_code=404, detail="Not found")
 
     await storage.remove_from_allowlist(_db(request), entry_id)
+    await storage.log_action(_db(request), actor_email=email, action="quarantine.allowlist_remove", target=str(entry_id))
     return RedirectResponse(url="/quarantine", status_code=303)
 
 
@@ -1479,7 +1933,66 @@ async def restore_deleted(request: Request, slug: str):
         raise HTTPException(status_code=404, detail="Not found")
 
     await storage.restore_newsletter(_db(request), slug)
+    await storage.log_action(_db(request), actor_email=email, action="newsletter.restore", target=slug)
     return RedirectResponse(url="/deleted", status_code=303)
+
+
+@app.get("/admin/newsletters")
+async def admin_all_newsletters(request: Request, page: int = 1):
+    """Super-admin only: every newsletter ever ingested, ordered by created_at (when it
+    was actually added to the archive, not received_at/the email's own date), including
+    quarantined and deleted ones with their status shown -- a true ingestion log."""
+    email, identity_display = await _current_user(request)
+    if not email or not _is_super_admin(request, email):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    page = max(page, 1)
+    total = await storage.count_all_newsletters(_db(request))
+    total_pages = max(1, math.ceil(total / _PAGE_SIZE))
+    page = min(page, total_pages)
+    newsletters = await storage.list_all_newsletters(
+        _db(request), limit=_PAGE_SIZE, offset=(page - 1) * _PAGE_SIZE
+    )
+    return _render(
+        "admin_newsletters.html",
+        newsletters=newsletters,
+        page=page,
+        total_pages=total_pages,
+        pagination_items=_pagination_items(page, total_pages),
+        has_next=page < total_pages,
+        identity_display=identity_display,
+        identity_email=email,
+        is_super_admin=True,
+    )
+
+
+@app.get("/admin/actions")
+async def admin_action_log(request: Request, page: int = 1):
+    """Super-admin only: audit trail -- a "login" row at most once per user per rolling
+    4-hour session (see storage.log_login_if_new_session, hooked into _current_user),
+    plus one row for every modification action (delete/restore/backdate/reprocess a
+    newsletter, create/edit/revoke an embed, grant/revoke permissions, every quarantine
+    action) -- each recording who did it."""
+    email, identity_display = await _current_user(request)
+    if not email or not _is_super_admin(request, email):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    page = max(page, 1)
+    total = await storage.count_action_log(_db(request))
+    total_pages = max(1, math.ceil(total / _PAGE_SIZE))
+    page = min(page, total_pages)
+    entries = await storage.list_action_log(_db(request), limit=_PAGE_SIZE, offset=(page - 1) * _PAGE_SIZE)
+    return _render(
+        "admin_actions.html",
+        entries=entries,
+        page=page,
+        total_pages=total_pages,
+        pagination_items=_pagination_items(page, total_pages),
+        has_next=page < total_pages,
+        identity_display=identity_display,
+        identity_email=email,
+        is_super_admin=True,
+    )
 
 
 @app.post("/maintenance/backfill")
@@ -1613,9 +2126,10 @@ async def create_embed(request: Request):
     if not name:
         raise HTTPException(status_code=400, detail="Name is required")
 
+    token = secrets.token_urlsafe(16)
     await storage.create_embed_query(
         _db(request),
-        token=secrets.token_urlsafe(16),
+        token=token,
         name=name,
         sender_email=sender_email,
         result_limit=result_limit,
@@ -1623,6 +2137,7 @@ async def create_embed(request: Request):
         created_by=email,
         show_thumbnails=show_thumbnails,
     )
+    await storage.log_action(_db(request), actor_email=email, action="embed.create", target=token, detail=name)
     return RedirectResponse(url="/embeds", status_code=303)
 
 
@@ -1654,6 +2169,7 @@ async def edit_embed(request: Request, token: str):
         sort=sort,
         show_thumbnails=show_thumbnails,
     )
+    await storage.log_action(_db(request), actor_email=email, action="embed.edit", target=token, detail=name)
     return RedirectResponse(url="/embeds", status_code=303)
 
 
@@ -1670,6 +2186,7 @@ async def delete_embed(request: Request, token: str):
     if not await _can_manage_embed(request, email, embed):
         raise HTTPException(status_code=403, detail="Not allowed to revoke this embed")
     await storage.delete_embed_query(_db(request), token)
+    await storage.log_action(_db(request), actor_email=email, action="embed.revoke", target=token, detail=embed.name)
     return RedirectResponse(url="/embeds", status_code=303)
 
 
@@ -1683,7 +2200,11 @@ async def embed_list(request: Request, token: str):
         raise HTTPException(status_code=404, detail="Not found")
 
     newsletters = await storage.list_newsletters(
-        _db(request), sender=embed.sender_email, sort=embed.sort, limit=embed.result_limit
+        _db(request),
+        sender=embed.sender_email,
+        sort=embed.sort,
+        limit=embed.result_limit,
+        public_only=True,
     )
 
     # Prefer the sender's display name (e.g. "Veterans at ASU") over their bare address,
@@ -1696,8 +2217,9 @@ async def embed_list(request: Request, token: str):
 
     return _render(
         "embed_list.html",
-        token=token,
-        embed=embed,
+        feed_title=embed.name,
+        show_thumbnails=embed.show_thumbnails,
+        item_url_prefix=f"/embed/{token}",
         newsletters=newsletters,
         sender_name=sender_name,
         standalone=not _looks_embedded(request),
@@ -1715,6 +2237,8 @@ async def embed_permalink(request: Request, token: str, slug: str):
 
     newsletter = await storage.get_by_slug(_db(request), slug)
     if newsletter is None or newsletter.quarantined_at or newsletter.deleted_at:
+        raise HTTPException(status_code=404, detail="Newsletter not found")
+    if newsletter.visibility != "public":
         raise HTTPException(status_code=404, detail="Newsletter not found")
     if embed.sender_email and newsletter.from_email != embed.sender_email:
         raise HTTPException(status_code=404, detail="Newsletter not found")
@@ -1737,6 +2261,71 @@ async def embed_permalink(request: Request, token: str, slug: str):
         embed_back_label=embed_back_label,
         base_url=base_url,
         canonical_url=f"{base_url}/embed/{token}/n/{slug}",
+    )
+
+
+@app.get("/embed/s/{key}")
+async def sender_feed(request: Request, key: str):
+    """Public, unauthenticated: a sender's public newsletters, reached by an unguessable
+    key one of that sender's admins minted (storage.set_sender_share_key). Deliberately
+    not an embed_queries row -- it needs no configuration and shouldn't clutter /embeds.
+    Lives under /embed/* so the existing Access Bypass policy covers it.
+
+    Two path segments, so it can't collide with /embed/{token} (one) or
+    /embed/{token}/n/{slug} (three)."""
+    from_email = await storage.get_sender_by_share_key(_db(request), key)
+    if not from_email:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    newsletters = await storage.list_newsletters(
+        _db(request), sender=from_email, sort="newest", limit=_PAGE_SIZE, public_only=True
+    )
+    # Nothing public for this sender -- 404 rather than an empty page, so a live key
+    # never confirms anything about a sender who has published nothing.
+    if not newsletters:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    sender_name = parseaddr(newsletters[0].from_address)[0] or from_email
+    return _render(
+        "embed_list.html",
+        feed_title=sender_name,
+        show_thumbnails=True,
+        item_url_prefix=f"/embed/s/{key}",
+        newsletters=newsletters,
+        sender_name=sender_name,
+        standalone=not _looks_embedded(request),
+    )
+
+
+@app.get("/embed/s/{key}/n/{slug}")
+async def sender_share_permalink(request: Request, key: str, slug: str):
+    """Public, unauthenticated: the shareable single-newsletter link. Same re-validation
+    shape as embed_permalink -- the key resolves to a sender and the newsletter must
+    actually belong to it and be public, so a key can't be used to read someone else's
+    or an unpublished newsletter."""
+    from_email = await storage.get_sender_by_share_key(_db(request), key)
+    if not from_email:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    newsletter = await storage.get_by_slug(_db(request), slug)
+    if newsletter is None or newsletter.quarantined_at or newsletter.deleted_at:
+        raise HTTPException(status_code=404, detail="Newsletter not found")
+    if newsletter.visibility != "public" or newsletter.from_email != from_email:
+        raise HTTPException(status_code=404, detail="Newsletter not found")
+
+    sender_name = parseaddr(newsletter.from_address)[0] or from_email
+    base_url = str(request.base_url).rstrip("/")
+    return _render(
+        "permalink.html",
+        newsletter=newsletter,
+        identity_display=None,
+        identity_email=None,
+        is_admin=False,
+        is_super_admin=False,
+        embed_back_url=f"/embed/s/{key}",
+        embed_back_label=f"Show previous newsletters from {sender_name}",
+        base_url=base_url,
+        canonical_url=f"{base_url}/embed/s/{key}/n/{slug}",
     )
 
 

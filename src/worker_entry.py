@@ -317,6 +317,11 @@ async def ingest_via_d1(raw_bytes: bytes, to_address: str, db, bucket) -> storag
         if not (from_email and await storage.is_sender_allowlisted(db, from_email)):
             quarantined_at = datetime.now(timezone.utc).isoformat()
 
+    # Public/private default: an explicit per-sender setting wins, else public only if
+    # somebody administers this sender (see storage.resolve_default_visibility). An
+    # unparseable From: gets private -- fail closed rather than expose it publicly.
+    visibility = await storage.resolve_default_visibility(db, from_email) if from_email else "private"
+
     await storage.insert_newsletter(
         db,
         message_id=parsed.message_id,
@@ -331,6 +336,7 @@ async def ingest_via_d1(raw_bytes: bytes, to_address: str, db, bucket) -> storag
         plain_text_fallback=parsed.text_body,
         thumbnail_key=thumbnail_key,
         quarantined_at=quarantined_at,
+        visibility=visibility,
     )
 
     newsletter_id = await storage.get_id_by_slug(db, slug)
