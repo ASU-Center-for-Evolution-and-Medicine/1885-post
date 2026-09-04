@@ -341,15 +341,28 @@ a.page-btn:hover { background: var(--asu-maroon); color: #fff; text-decoration: 
   display: flex; flex-direction: column; align-items: center;
   gap: 0.5rem; padding: 0.75rem 1rem;
 }
-.app-footer__buttons { display: flex; align-items: center; gap: 0.75rem; }
+.app-footer__buttons { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 0.75rem; }
+/* Site pages and external profiles are different kinds of thing, so the social icons
+   sit behind the same thin rule the header uses between its nav and your name. */
+.app-footer__socials {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  padding-left: 0.85rem; border-left: 1px solid var(--border);
+}
+/* Narrow enough that the footer row wraps: the divider would otherwise orphan onto the
+   second line as a stray rule to the left of the icons. */
+@media (max-width: 480px) {
+  .app-footer__socials { padding-left: 0; border-left: none; }
+}
 .app-footer__credit {
   margin: 0; font-size: 0.7rem; color: var(--text-muted); text-align: center;
 }
 .app-footer__btn {
+  display: inline-flex; align-items: center; gap: 0.4rem;
   flex: 0 0 auto; color: #fff; background: var(--asu-maroon);
   font-weight: 700; font-size: 0.75rem; padding: 0.4rem 1rem;
   border-radius: 999px; text-decoration: none; white-space: nowrap;
 }
+.app-footer__btn svg { display: block; }
 .app-footer__btn:hover { background: var(--asu-black); color: #fff; text-decoration: none; }
 .app-footer__social {
   display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
@@ -434,7 +447,14 @@ _TEMPLATES = {
     <div class="app-footer__buttons">
       <a href="/about" class="app-footer__btn">About</a>
       <a href="/help" class="app-footer__btn">Help</a>
-      <a href="https://github.com/ASU-Center-for-Evolution-and-Medicine/1885-post" class="app-footer__btn" target="_blank" rel="noopener noreferrer" title="Source code for this site on GitHub">Source code</a>
+      <a href="https://github.com/ASU-Center-for-Evolution-and-Medicine/1885-post" class="app-footer__btn" target="_blank" rel="noopener noreferrer" title="Source code for this site on GitHub">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M9 6 3.5 12 9 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+          <path d="M15 6 20.5 12 15 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+        Source code
+      </a>
+      <span class="app-footer__socials">
       <a class="app-footer__social" href="https://www.linkedin.com/company/asu-center-for-evolution-medicine/" target="_blank" rel="noopener noreferrer" title="LinkedIn" aria-label="Center for Evolution and Medicine on LinkedIn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <rect x="2" y="2" width="20" height="20" rx="4" stroke="currentColor" stroke-width="2"></rect>
@@ -450,6 +470,7 @@ _TEMPLATES = {
           <path d="M10.2 9.3 15.6 12 10.2 14.7Z" fill="currentColor"></path>
         </svg>
       </a>
+      </span>
     </div>
     <p class="app-footer__credit">Built and maintained by the
     <a href="https://evmed.asu.edu/">Center for Evolution and Medicine</a> at ASU</p>
