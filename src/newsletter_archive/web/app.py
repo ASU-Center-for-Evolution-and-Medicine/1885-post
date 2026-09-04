@@ -360,6 +360,7 @@ a.page-btn:hover { background: var(--asu-maroon); color: #fff; text-decoration: 
 .app-footer__social svg { display: block; }
 
 .about-logo { display: block; height: 80px; width: auto; border-radius: 4px; }
+.source-repo { font-weight: 600; word-break: break-all; }
 
 .visibility-badge {
   display: inline-block; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
@@ -433,6 +434,7 @@ _TEMPLATES = {
     <div class="app-footer__buttons">
       <a href="/about" class="app-footer__btn">About</a>
       <a href="/help" class="app-footer__btn">Help</a>
+      <a href="https://github.com/ASU-Center-for-Evolution-and-Medicine/1885-post" class="app-footer__btn" target="_blank" rel="noopener noreferrer" title="Source code for this site on GitHub">Source code</a>
       <a class="app-footer__social" href="https://www.linkedin.com/company/asu-center-for-evolution-medicine/" target="_blank" rel="noopener noreferrer" title="LinkedIn" aria-label="Center for Evolution and Medicine on LinkedIn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <rect x="2" y="2" width="20" height="20" rx="4" stroke="currentColor" stroke-width="2"></rect>
@@ -843,6 +845,12 @@ _TEMPLATES = {
 
   <p class="meta">Made by the <a href="https://evmed.asu.edu/">Center for Evolution and
   Medicine</a> at <a href="https://asu.edu">Arizona State University</a>.</p>
+
+  <h2>Source code</h2>
+  <p class="meta">This site is open source. The code that runs The 1885 Post itself --
+  how newsletters are received, sanitized, stored, and shared -- is published for
+  transparency in its own repository:</p>
+  <p class="meta"><a class="source-repo" href="https://github.com/ASU-Center-for-Evolution-and-Medicine/1885-post" target="_blank" rel="noopener noreferrer">github.com/ASU-Center-for-Evolution-and-Medicine/1885-post</a></p>
 {% endblock %}
 """,
     "permissions.html": """{% extends "base.html" %}
