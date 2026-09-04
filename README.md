@@ -23,14 +23,26 @@ through inboxes or losing old issues when a mailing platform's account lapses.
   an archived newsletter still renders correctly even after the sending platform
   deletes or expires the originals. Unsubscribe links are neutralized so the public
   archive can never be used to unsubscribe someone.
+- **Public or private, per newsletter.** Public newsletters appear in embeds and can be
+  shared outside the university; private ones stay visible to signed-in users but are
+  excluded from every embed and have no public link. New mail is published automatically
+  only when somebody already administers its sending address — otherwise it arrives
+  private, so an unfamiliar address can't publish to the outside world just by emailing
+  in. Each sender's admins flip individual newsletters and set their own default.
+- **Share one newsletter without building an embed.** An admin mints a single
+  unguessable key per sender, which then gives every public newsletter from that address
+  a shareable link plus a public feed of that sender's published newsletters. Revoking
+  the key switches all of those links off at once.
 - **Embeddable widgets** -- publish a "recent newsletters" iframe for any sender (or
   all of them) on a department website in a couple of clicks.
 - **Granular permissions** -- per-sender admin grants let specific people manage
   specific senders' newsletters, without needing full admin access to the whole site.
-- **Sender quarantine.** Only `*.asu.edu` senders (any subdomain) show up by default;
-  anything else is held in a review queue instead of the public site until a super
-  admin whitelists it -- nothing is ever silently rejected or dropped, so mail
-  delivery stays diagnosable.
+- **Sender quarantine.** Anything from outside `*.asu.edu` (any subdomain) is held in a
+  review queue instead of the public site until a super admin whitelists it -- nothing
+  is ever silently rejected or dropped, so mail delivery stays diagnosable.
+- **An audit trail.** A super-admin-only action log records every deletion, restore,
+  backdate, reprocess, embed change, permission grant, quarantine action and visibility
+  change, with who did it -- plus a login row per person per session.
 
 ## How it works
 

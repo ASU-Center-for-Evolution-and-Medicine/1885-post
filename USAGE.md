@@ -10,14 +10,39 @@ manage-preferences links are automatically disabled in the archived copy (so the
 archive can't be used to unsubscribe someone); everything else, including all your
 regular content links, is preserved exactly as sent.
 
-## Sent it but don't see it on the site?
+## Public or private
 
-Only newsletters from a `*.asu.edu` address (any subdomain) show up automatically. If
-your department sends through a third-party platform under a different domain, that
-first newsletter is held in a review queue rather than the public site until it's
-whitelisted -- it's never rejected or silently dropped, so nothing is ever truly lost,
-it just needs a one-time approval. Contact Suhail (suhail.ghafoor@asu.edu) to get that
-sending address whitelisted.
+Every newsletter is one or the other, shown next to its date. **Public** means it appears
+in embeds and can be shared outside ASU. **Private** means signed-in people can read it
+here, but it's in no embed and has no public link.
+
+New mail is published automatically only if somebody already administers your sending
+address. If nobody does yet, it arrives private -- archived and visible here, but not
+published -- so an unfamiliar address can't put content in front of the outside world
+just by emailing in. If you administer a sender, every newsletter has a **Make public** /
+**Make private** button, and **Sender settings** on the Permissions page lets you set
+what new mail from your address defaults to.
+
+## Share a single newsletter
+
+Open the newsletter and use **Copy public link** -- no embed required. The first time,
+click **Create public link** to mint your sender's sharing key; after that every public
+newsletter from that address has a shareable link, and recipients can browse your other
+published newsletters from it. Revoking the key under Sender settings switches all of
+those links off at once.
+
+## Sent it but don't see it?
+
+Two things can hold a newsletter back, and neither ever discards it:
+
+- **A sending address outside `*.asu.edu`** is held in a review queue until a super
+  admin whitelists it -- common if your department sends through a third-party platform
+  under its own domain.
+- **An ASU address nobody administers yet** arrives private, so it's in the archive but
+  not published anywhere public.
+
+Either way, contact Suhail (suhail.ghafoor@asu.edu) -- whitelisting an address or
+granting you admin over your sender fixes it, and nothing sent in the meantime is lost.
 
 ## Add a "recent newsletters" widget to your department website
 

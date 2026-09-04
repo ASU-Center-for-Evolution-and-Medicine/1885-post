@@ -780,10 +780,16 @@ _TEMPLATES = {
   user can create one, no admin access needed.</p>
   <p class="meta"><strong>Public or private:</strong> every newsletter is one or the
   other, shown next to its date. Public means it appears in embeds and can be shared
-  outside ASU; private means it's visible to signed-in people here but nowhere else.
-  If you administer a sender, each newsletter has a <strong>Make private</strong> /
-  <strong>Make public</strong> button, and you can set what new mail from your address
-  defaults to under Sender settings on <a href="/permissions">Permissions</a>.</p>
+  outside ASU; private means it's visible to signed-in people here but nowhere else --
+  not in any embed, and with no public link. If you administer a sender, each newsletter
+  has a <strong>Make private</strong> / <strong>Make public</strong> button.</p>
+  <p class="meta"><strong>What new mail defaults to.</strong> If somebody already
+  administers your sending address, new newsletters from it arrive public, exactly as
+  before. If nobody does yet, they arrive <em>private</em> -- archived and visible here,
+  but not published -- so an unfamiliar address can't put content in front of the
+  outside world just by emailing in. Under Sender settings on
+  <a href="/permissions">Permissions</a> you can set your own address's default either
+  way, which overrides that.</p>
   <p class="meta"><strong>Sharing one newsletter:</strong> open it and use
   <strong>Copy public link</strong> -- no embed needed. The first time, click
   <strong>Create public link</strong> to mint your sender's sharing key; every public
@@ -808,12 +814,16 @@ _TEMPLATES = {
   images are downloaded once and stored permanently as part of the archive, rather than
   left pointing at wherever they originally lived -- so the newsletter still renders
   correctly even if the sending platform later deletes or expires them.</p>
-  <p class="meta"><strong>Only ASU senders show up by default.</strong> A newsletter
-  from any <code>*.asu.edu</code> address appears immediately. Anything from another
-  domain is held in a quarantine -- invisible on the homepage, the archive, and every
-  embed -- until a super admin whitelists that sender's address; nothing is ever
-  silently rejected or dropped. If your department sends through a third-party platform
-  under a different domain, contact Suhail to get that address whitelisted.</p>
+  <p class="meta"><strong>Two gates stand between arriving and being published.</strong>
+  First, anything from outside <code>*.asu.edu</code> is held in a quarantine --
+  invisible on the homepage, the archive, and every embed -- until a super admin
+  whitelists that sending address. Second, an <code>*.asu.edu</code> newsletter is
+  published automatically only if somebody already administers its sending address;
+  otherwise it lands private, and an admin publishes it when they're ready. Nothing is
+  ever silently rejected or dropped either way, so a newsletter that hasn't shown up
+  where you expected is always findable. If your department sends through a third-party
+  platform under a different domain, or your sending address is new here, contact
+  Suhail.</p>
 
   <h2>Contact</h2>
   <p class="meta">Questions, need admin access, or have a feature request? Contact Suhail
