@@ -351,6 +351,13 @@ a.page-btn:hover { background: var(--asu-maroon); color: #fff; text-decoration: 
   border-radius: 999px; text-decoration: none; white-space: nowrap;
 }
 .app-footer__btn:hover { background: var(--asu-black); color: #fff; text-decoration: none; }
+.app-footer__social {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 1.75rem; height: 1.75rem; border-radius: 999px;
+  background: var(--asu-maroon); color: #fff; text-decoration: none;
+}
+.app-footer__social:hover { background: var(--asu-black); color: #fff; text-decoration: none; }
+.app-footer__social svg { display: block; }
 
 .about-logo { display: block; height: 80px; width: auto; border-radius: 4px; }
 
@@ -426,6 +433,21 @@ _TEMPLATES = {
     <div class="app-footer__buttons">
       <a href="/about" class="app-footer__btn">About</a>
       <a href="/help" class="app-footer__btn">Help</a>
+      <a class="app-footer__social" href="https://www.linkedin.com/company/asu-center-for-evolution-medicine/" target="_blank" rel="noopener noreferrer" title="LinkedIn" aria-label="Center for Evolution and Medicine on LinkedIn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="2" y="2" width="20" height="20" rx="4" stroke="currentColor" stroke-width="2"></rect>
+          <circle cx="7.3" cy="7.8" r="1.4" fill="currentColor"></circle>
+          <rect x="6.2" y="10.6" width="2.3" height="7.2" fill="currentColor"></rect>
+          <rect x="10.6" y="10.6" width="2.3" height="7.2" fill="currentColor"></rect>
+          <path d="M12.9 13.6c1.4-2 5-1.5 5 1.6v2.6" stroke="currentColor" stroke-width="2.3" fill="none"></path>
+        </svg>
+      </a>
+      <a class="app-footer__social" href="https://www.youtube.com/evolutionarymedicine" target="_blank" rel="noopener noreferrer" title="YouTube" aria-label="Center for Evolution and Medicine on YouTube">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="1.8" y="5" width="20.4" height="14" rx="4.5" stroke="currentColor" stroke-width="2"></rect>
+          <path d="M10.2 9.3 15.6 12 10.2 14.7Z" fill="currentColor"></path>
+        </svg>
+      </a>
     </div>
     <p class="app-footer__credit">Built and maintained by the
     <a href="https://evmed.asu.edu/">Center for Evolution and Medicine</a> at ASU</p>
